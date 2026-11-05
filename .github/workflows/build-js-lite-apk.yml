@@ -1,10 +1,10 @@
-name: Build JS Lite Browser APK
+name: Build JS Lite Browser v1.1 APK
 on:
   push:
     branches: [js-lite-browser-build]
   workflow_dispatch:
 permissions:
-  contents: read
+  contents: write
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -17,18 +17,40 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.11.1'
-      - name: Restore source archive
+      - name: Restore Android source
         run: |
           base64 -d assets/js-lite-browser-src.tar.xz.b64 > /tmp/js-lite-browser-src.tar.xz
           echo "6f4886e65693450b97b84bc941eb0ab33bfd3bad358e84458dc2d162f9a891c5  /tmp/js-lite-browser-src.tar.xz" | sha256sum -c -
           mkdir -p js-lite-browser
           tar -xJf /tmp/js-lite-browser-src.tar.xz -C js-lite-browser
-      - name: Build APK
+      - name: Apply v1.1 upgrade
+        run: |
+          base64 -d assets/js-lite-v11.patch.xz.b64 > /tmp/js-lite-v11.patch.xz
+          echo "e413652b608c34cdcf5c003e3c49a5bc785528c0ac9929737db913b7f6edc400  /tmp/js-lite-v11.patch.xz" | sha256sum -c -
+          xz -dc /tmp/js-lite-v11.patch.xz | sed '/^--- a\/README.md$/,$d' > /tmp/js-lite-v11.patch
+          (cd js-lite-browser && patch --batch -p1 < /tmp/js-lite-v11.patch)
+      - name: Build Android APK
         working-directory: js-lite-browser
         run: gradle assembleDebug --no-daemon --stacktrace
       - uses: actions/upload-artifact@v4
         with:
-          name: JS-Lite-Browser-APK
+          name: JS-Lite-Browser-v1.1.0-APK
           path: js-lite-browser/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 30
+      - name: Publish direct APK on GitHub Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: js-lite-browser-v1.1.0
+        run: |
+          set -e
+          apk="js-lite-browser/app/build/outputs/apk/debug/app-debug.apk"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$apk#JS-Lite-Browser-v1.1.0.apk" --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG" "$apk#JS-Lite-Browser-v1.1.0.apk" \
+              --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+              --title "JS Lite Browser v1.1.0 (Android Debug APK)" \
+              --notes "LINE-like centered/iPhone or left/Android header style; locally saved auto JS scripts with URL match rules. Android 8+. Debug APK for personal testing. Because the prior APK used a different temporary debug signing key, uninstall v1.0 before installing v1.1.0." \
+              --prerelease
+          fi
