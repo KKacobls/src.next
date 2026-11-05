@@ -1,0 +1,37 @@
+name: Build JS Lite Browser APK
+on:
+  push:
+    branches: [js-lite-browser-build]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Prepare Android SDK
+        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+      - name: Restore source archive
+        run: |
+          base64 -d assets/js-lite-browser-src.tar.xz.b64 > /tmp/js-lite-browser-src.tar.xz
+          echo "6f4886e65693450b97b84bc941eb0ab33bfd3bad358e84458dc2d162f9a891c5  /tmp/js-lite-browser-src.tar.xz" | sha256sum -c -
+          mkdir -p js-lite-browser
+          tar -xJf /tmp/js-lite-browser-src.tar.xz -C js-lite-browser
+      - name: Build APK
+        working-directory: js-lite-browser
+        run: gradle assembleDebug --no-daemon --stacktrace
+      - uses: actions/upload-artifact@v4
+        with:
+          name: JS-Lite-Browser-APK
+          path: js-lite-browser/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 30
