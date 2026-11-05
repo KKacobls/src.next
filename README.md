@@ -1,9 +1,9 @@
 # JS Lite Browser (Android)
 
-This is a standalone Android WebView browser project on an isolated branch of the Kiwi fork. The original `kiwi` default branch is unchanged.
+Standalone Android WebView browser on an isolated branch of the Kiwi fork; the original kiwi branch is untouched.
 
-Build via **Actions > Build JS Lite Browser APK**. The workflow restores the exact source archive in `assets/`, builds it with Gradle 8.11.1 / AGP 8.9.2, and uploads the Debug APK artifact.
+**Latest v1.1.1:** The normal LINE-style browsing header has no JS button. Tap the title/domain to open the URL editing dialog: there you can edit the URL, toggle **iPhone / Android** header layout, or tap **JS** to manage URL-matched auto-run JavaScript scripts. Long press the header for other tools, including a manual Console. New installs default to Traditional Chinese; English and system language remain selectable.
 
-Features: Traditional Chinese / English, single-page LINE-like UI, URL navigation, manual JavaScript console, browser storage and selected website permissions.
+Download the Android Debug APK from **GitHub Releases** (no ChatGPT/sandbox links or Actions ZIP needed). GitHub Actions builds from the pinned archive plus versioned patches, with Java 17 and Gradle 8.11.1.
 
-The project source archive is pinned by SHA-256 in the workflow. Debug APK is for personal testing only.
+**Signing:** GitHub-hosted ephemeral debug signing keys may change across builds. If Android reports a package signature conflict, uninstall the previous app before installing (this deletes app data). For seamless upgrades later, configure a secure and stable release signing key using GitHub Secrets.

@@ -1,0 +1,90 @@
+--- a/app/src/main/java/com/kk/jsbrowser/MainActivity.java
++++ b/app/src/main/java/com/kk/jsbrowser/MainActivity.java
+@@ -85,7 +85,7 @@
+     @Override
+     protected void attachBaseContext(Context base) {
+         SharedPreferences prefs = base.getSharedPreferences(PREFS, MODE_PRIVATE);
+-        String language = prefs.getString("language", "system");
++        String language = prefs.getString("language", "zh-TW");
+         if (!"system".equals(language)) {
+             Configuration config = new Configuration(base.getResources().getConfiguration());
+             config.setLocale(Locale.forLanguageTag(language));
+@@ -144,18 +144,6 @@
+         headerInfo.setOnLongClickListener(v -> { showTools(); return true; });
+         bar.setOnLongClickListener(v -> { showTools(); return true; });
+ 
+-        TextView scriptsButton = new TextView(this);
+-        scriptsButton.setText("JS");
+-        scriptsButton.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+-        scriptsButton.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
+-        scriptsButton.setTextColor(Color.rgb(48, 68, 55));
+-        scriptsButton.setGravity(Gravity.CENTER);
+-        scriptsButton.setContentDescription(getString(R.string.auto_scripts));
+-        FrameLayout.LayoutParams scriptParams = new FrameLayout.LayoutParams(dp(46), -1, Gravity.END);
+-        scriptParams.rightMargin = dp(52);
+-        bar.addView(scriptsButton, scriptParams);
+-        scriptsButton.setOnClickListener(v -> autoScripts.showManager());
+-
+         TextView close = new TextView(this);
+         close.setText("×");
+         close.setTextSize(TypedValue.COMPLEX_UNIT_SP, 35);
+@@ -358,9 +346,23 @@
+         wrapper.addView(input, new LinearLayout.LayoutParams(-1, -2));
+         Button style = new Button(this);
+         style.setAllCaps(false);
+-        style.setText(getString(R.string.header_style) + ": " + getString(isCenteredHeader() ? R.string.style_ios : R.string.style_android));
+-        wrapper.addView(style, new LinearLayout.LayoutParams(-1, dp(48)));
++        style.setText(isCenteredHeader() ? "iPhone" : "Android");
++        style.setContentDescription(getString(R.string.header_style));
++        // Keep the normal browser header clean. Script management is visible only
++        // after the user taps the URL/title area to edit the address.
++        LinearLayout urlTools = new LinearLayout(this);
++        urlTools.setOrientation(LinearLayout.HORIZONTAL);
++        urlTools.setGravity(Gravity.CENTER_VERTICAL);
++        wrapper.addView(urlTools, new LinearLayout.LayoutParams(-1, dp(48)));
++        urlTools.addView(style, new LinearLayout.LayoutParams(0, dp(48), 1));
+         style.setOnClickListener(v -> chooseHeaderStyle(style));
++        Button manageScripts = new Button(this);
++        manageScripts.setText("JS");
++        manageScripts.setAllCaps(false);
++        manageScripts.setContentDescription(getString(R.string.auto_scripts));
++        LinearLayout.LayoutParams scriptParams = new LinearLayout.LayoutParams(dp(66), dp(48));
++        scriptParams.leftMargin = dp(8);
++        urlTools.addView(manageScripts, scriptParams);
+         AlertDialog dialog = new AlertDialog.Builder(this)
+                 .setTitle(R.string.open_url)
+                 .setView(wrapper)
+@@ -368,7 +370,10 @@
+                 .setNeutralButton(R.string.console, (d, which) -> showConsole())
+                 .setNegativeButton(R.string.cancel, null)
+                 .create();
+-        dialog.getWindow();
++        manageScripts.setOnClickListener(v -> {
++            dialog.dismiss();
++            autoScripts.showManager();
++        });
+         dialog.show();
+         input.requestFocus();
+         dialog.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE);
+@@ -398,7 +403,7 @@
+                     getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                             .putString("header_style", which == 0 ? "ios" : "android").apply();
+                     applyHeaderStyle();
+-                    if (selector != null) selector.setText(getString(R.string.header_style) + ": " + labels[which]);
++                    if (selector != null) selector.setText(which == 0 ? "iPhone" : "Android");
+                     dialog.dismiss();
+                 }).setNegativeButton(R.string.cancel, null).show();
+     }
+--- a/app/build.gradle
++++ b/app/build.gradle
+@@ -10,8 +10,8 @@
+         applicationId 'com.kk.jsbrowser'
+         minSdk 26
+         targetSdk 35
+-        versionCode 2
+-        versionName '1.1.0'
++        versionCode 3
++        versionName '1.1.1'
+     }
+ 
+     buildFeatures {
