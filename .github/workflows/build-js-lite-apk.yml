@@ -1,4 +1,4 @@
-name: Build JS Lite Browser v1.1.1 APK
+name: Build JS Lite Browser v1.1.2 APK
 on:
   push:
     branches: [js-lite-browser-build]
@@ -29,32 +29,37 @@ jobs:
           echo "e413652b608c34cdcf5c003e3c49a5bc785528c0ac9929737db913b7f6edc400  /tmp/js-lite-v11.patch.xz" | sha256sum -c -
           xz -dc /tmp/js-lite-v11.patch.xz | sed '/^--- a\/README.md$/,$d' > /tmp/js-lite-v11.patch
           (cd js-lite-browser && patch --batch -p1 < /tmp/js-lite-v11.patch)
-      - name: Apply v1.1.1 address editor and Traditional Chinese default
+      - name: Apply v1.1.2 address editor and Traditional Chinese default
         run: (cd js-lite-browser && patch --batch -p1 < ../assets/js-lite-v111.patch)
+      - name: Apply v1.1.2 overflow menu and native dialog styling
+        run: |
+          base64 -d assets/js-lite-v112.patch.xz.b64 > /tmp/js-lite-v112.patch.xz
+          echo "56ae7bd50714324e44f18a4e17f5ab2e7022f6dee37f309570c136e0429aeb79  /tmp/js-lite-v112.patch.xz" | sha256sum -c -
+          (cd js-lite-browser && xz -dc /tmp/js-lite-v112.patch.xz | patch --batch -p1)
       - name: Build Android APK
         working-directory: js-lite-browser
         run: gradle assembleDebug --no-daemon --stacktrace
       - name: Prepare APK file
-        run: cp js-lite-browser/app/build/outputs/apk/debug/app-debug.apk JS-Lite-Browser-v1.1.1.apk
+        run: cp js-lite-browser/app/build/outputs/apk/debug/app-debug.apk JS-Lite-Browser-v1.1.2.apk
       - uses: actions/upload-artifact@v4
         with:
-          name: JS-Lite-Browser-v1.1.1-APK
-          path: JS-Lite-Browser-v1.1.1.apk
+          name: JS-Lite-Browser-v1.1.2-APK
+          path: JS-Lite-Browser-v1.1.2.apk
           if-no-files-found: error
           retention-days: 30
       - name: Publish direct APK on GitHub Releases
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: js-lite-browser-v1.1.1
+          TAG: js-lite-browser-v1.1.2
         run: |
           set -e
-          apk="JS-Lite-Browser-v1.1.1.apk"
+          apk="JS-Lite-Browser-v1.1.2.apk"
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$TAG" "$apk" --clobber --repo "$GITHUB_REPOSITORY"
           else
             gh release create "$TAG" "$apk" \
               --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-              --title "JS Lite Browser v1.1.1 (Android Debug APK)" \
-              --notes "JS button moved from the browsing header into the URL editing dialog (next to iPhone/Android header style). Traditional Chinese is the default for new installs, with manual English/system switch retained. Existing automatic JavaScript scripts are unchanged. Android 8+. Personal testing/debug signing: uninstall earlier builds if Android reports a signature conflict." \
+              --title "JS Lite Browser v1.1.2 (Android Debug APK)" \
+              --notes "Updated LINE-style header: title and domain left, overflow menu ⋮ and close × right. URL editing, auto JS, console, language, layout, and version number moved under ⋮. Android-native dialog typography for JavaScript alert/confirm; green confirm button. Website CSS unchanged. Existing scripts are retained if Android allows an in-place upgrade. Android 8+. Personal testing/debug signing: uninstall earlier builds if Android reports a signature conflict." \
               --prerelease
           fi

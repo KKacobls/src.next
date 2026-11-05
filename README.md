@@ -2,8 +2,10 @@
 
 Standalone Android WebView browser on an isolated branch of the Kiwi fork; the original kiwi branch is untouched.
 
-**Latest v1.1.1:** The normal LINE-style browsing header has no JS button. Tap the title/domain to open the URL editing dialog: there you can edit the URL, toggle **iPhone / Android** header layout, or tap **JS** to manage URL-matched auto-run JavaScript scripts. Long press the header for other tools, including a manual Console. New installs default to Traditional Chinese; English and system language remain selectable.
+**v1.1.2:** A clean LINE-style top header shows webpage title, domain, ⋮ overflow menu and close ×. The rounded overflow menu includes URL/search, refresh, back, home, zoom-out, share, app permissions, auto-JS scripts, manual JS console, iPhone/Android header style, language, and clear browsing data. Version number appears at the bottom of the menu and in URL edit. No tabs.
 
-Download the Android Debug APK from **GitHub Releases** (no ChatGPT/sandbox links or Actions ZIP needed). GitHub Actions builds from the pinned archive plus versioned patches, with Java 17 and Gradle 8.11.1.
+The native UI uses Android sans-serif typography with dark heading text and muted-grey descriptions. WebView JavaScript alert/confirm dialogs use a centered bold domain, soft grey text and green confirm action. **Website CSS is untouched.** Defaults to Traditional Chinese.
 
-**Signing:** GitHub-hosted ephemeral debug signing keys may change across builds. If Android reports a package signature conflict, uninstall the previous app before installing (this deletes app data). For seamless upgrades later, configure a secure and stable release signing key using GitHub Secrets.
+Download APK from **GitHub Releases**. GitHub Actions restores pinned source and versioned patches with Java 17 and Gradle 8.11.1.
+
+**Signing:** GitHub ephemeral debug keys might change between builds. Android may require uninstalling earlier versions (which deletes app data and saved user scripts). For seamless upgrade, configure permanent secure signing keys via GitHub Secrets.
