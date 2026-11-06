@@ -255,6 +255,8 @@ public final class BrowserExtras {
     /** Get current HTML with bounded memory and background networking, avoiding any UI-thread HTTP request. */
     private void serverSource(String url) {
         Toast.makeText(activity,"正在取得原始 HTML",Toast.LENGTH_SHORT).show();
+        final String ua=web.getSettings().getUserAgentString();
+        final String cookies=android.webkit.CookieManager.getInstance().getCookie(url);
         new Thread(()->{
             java.net.HttpURLConnection connection=null;
             try {
@@ -263,9 +265,8 @@ public final class BrowserExtras {
                 connection.setConnectTimeout(10000);
                 connection.setReadTimeout(12000);
                 connection.setInstanceFollowRedirects(false);
-                String cookie=android.webkit.CookieManager.getInstance().getCookie(url);
-                if(cookie!=null)connection.setRequestProperty("Cookie",cookie);
-                connection.setRequestProperty("User-Agent",web.getSettings().getUserAgentString());
+                if(cookies!=null)connection.setRequestProperty("Cookie",cookies);
+                connection.setRequestProperty("User-Agent",ua);
                 connection.setRequestProperty("Accept","text/html,application/xhtml+xml,*/*");
                 int status=connection.getResponseCode();
                 if(status>=300 && status<400)
