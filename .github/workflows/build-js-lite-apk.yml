@@ -1,4 +1,4 @@
-name: Build JS Lite Browser v1.2.0 APK
+name: Build JS Lite Browser v1.3.0 APK
 on:
   push:
     branches: [js-lite-browser-build]
@@ -26,26 +26,26 @@ jobs:
       - name: Check generated APK
         run: |
           test -s js-lite-browser/app/build/outputs/apk/debug/app-debug.apk
-          cp js-lite-browser/app/build/outputs/apk/debug/app-debug.apk JS-Lite-Browser-v1.2.0.apk
-          sha256sum JS-Lite-Browser-v1.2.0.apk
+          cp js-lite-browser/app/build/outputs/apk/debug/app-debug.apk JS-Lite-Browser-v1.3.0.apk
+          sha256sum JS-Lite-Browser-v1.3.0.apk
       - uses: actions/upload-artifact@v4
         with:
-          name: JS-Lite-Browser-v1.2.0-APK
-          path: JS-Lite-Browser-v1.2.0.apk
+          name: JS-Lite-Browser-v1.3.0-APK
+          path: JS-Lite-Browser-v1.3.0.apk
           if-no-files-found: error
           retention-days: 30
       - name: Publish APK to GitHub Releases
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: js-lite-browser-v1.2.0
+          TAG: js-lite-browser-v1.3.0
         run: |
           set -e
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$TAG" JS-Lite-Browser-v1.2.0.apk --clobber --repo "$GITHUB_REPOSITORY"
+            gh release upload "$TAG" JS-Lite-Browser-v1.3.0.apk --clobber --repo "$GITHUB_REPOSITORY"
           else
-            gh release create "$TAG" JS-Lite-Browser-v1.2.0.apk \
+            gh release create "$TAG" JS-Lite-Browser-v1.3.0.apk \
               --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-              --title "JS Lite Browser v1.2.0 Android APK" \
-              --notes "History, most recently closed URL, find in page, zoom, mobile/desktop, DOM source, developer-mode unlocking, UI themes and JSON import/export. Android 8+. Debug build." \
+              --title "JS Lite Browser v1.3.0 Android APK" \
+              --notes "New nine-action browser menu, persistent or session scripts via JSON, visual themes, gated developer swipe drawer, downloads, external app confirmations, default browser setup, adaptive icon. Android 8+. Debug build." \
               --prerelease
           fi
