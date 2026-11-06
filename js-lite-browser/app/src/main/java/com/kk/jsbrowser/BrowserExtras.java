@@ -35,6 +35,19 @@ public final class BrowserExtras {
     private final String mobileUserAgent;
     private int versionTaps;
     private long lastTap;
+    private AutoScriptManager scripts;
+    private java.util.function.Consumer<String> navigate;
+    void bindActions(AutoScriptManager scripts, java.util.function.Consumer<String> navigate) {
+        this.scripts = scripts; this.navigate = navigate;
+    }
+    boolean sidebarEnabled() { return developerEnabled() && prefs.getBoolean("developer_sidebar_v130", false); }
+    void toggleSidebar() {
+        if (!developerEnabled()) return;
+        boolean next = !prefs.getBoolean("developer_sidebar_v130", false);
+        prefs.edit().putBoolean("developer_sidebar_v130", next).apply();
+        toast(next ? "已開啟右側快捷工具" : "已關閉右側快捷工具");
+    }
+    String startUrl() {return prefs.getString("start_url_v130","");}
     private static final String HISTORY = "browser_history_v120";
     private static final String STYLE = "browser_theme_v120";
     private static final String[] PRESETS = {
@@ -77,7 +90,7 @@ public final class BrowserExtras {
             prefs.edit().putBoolean("developer_mode_v120", true).apply();
             versionTaps = 0;
             toast("已啟用開發者模式");
-        } else if (versionTaps >= 4) toast("再點擊 " + (7 - versionTaps) + " 次即可啟用開發者模式");
+        }
     }
 
     void recordPage(String url, String title) {
@@ -326,82 +339,131 @@ public final class BrowserExtras {
                 }).setNegativeButton("取消",null).show();
         }).setNegativeButton("關閉",null).show();
     }
+    private JSONObject exportConfig() throws org.json.JSONException {
+        JSONObject cfg = new JSONObject();
+        cfg.put("schemaVersion", 1);
+        cfg.put("developerMode", developerEnabled());
+        cfg.put("appearance", style());
+        JSONObject browser = new JSONObject();
+        browser.put("startUrl", startUrl());
+        browser.put("defaultZoom", prefs.getInt("zoom_v120",100));
+        browser.put("desktopMode", prefs.getBoolean("desktop_v120",false));
+        browser.put("restoreLastClosedTab", true);
+        browser.put("historyEnabled", true);
+        cfg.put("browser", browser);
+        JSONObject developer = new JSONObject();
+        developer.put("autoScriptsEnabled", prefs.getBoolean("autoScriptsEnabled_v120",true));
+        developer.put("sidebarEnabled", prefs.getBoolean("developer_sidebar_v130",false));
+        if (scripts != null) developer.put("scripts", scripts.exportScripts());
+        cfg.put("developer", developer);
+        return cfg;
+    }
+
+    /** Fully validate before writing persistent settings or changing active scripts. */
+    private void importConfig(String source) throws Exception {
+        JSONObject cfg = new JSONObject(source);
+        if (cfg.has("schemaVersion") && cfg.getInt("schemaVersion") != 1)
+            throw new IllegalArgumentException("目前支援 schemaVersion 1");
+        JSONObject appearance = cfg.optJSONObject("appearance");
+        JSONObject browser = cfg.optJSONObject("browser");
+        JSONObject developer = cfg.optJSONObject("developer");
+        JSONObject next = new JSONObject(style().toString());
+        JSONArray validatedScripts = null;
+        String target = null;
+        if (appearance != null) {
+            JSONArray keys = appearance.names();
+            if (keys != null) for (int i=0; i<keys.length(); i++) {
+                String key = keys.getString(i);
+                Object value = appearance.get(key);
+                if (key.endsWith("Color")) Color.parseColor(String.valueOf(value));
+                if (key.equals("toolbarPosition") && !("top".equals(value) || "bottom".equals(value)))
+                    throw new IllegalArgumentException("工具列位置僅接受 top 或 bottom");
+                if (key.equals("preset") && (appearance.getInt(key)<0 || appearance.getInt(key)>9))
+                    throw new IllegalArgumentException("預設樣式編號無效");
+                next.put(key,value);
+            }
+        }
+        if (browser != null) {
+            if (browser.has("defaultZoom")) {
+                int zoom = browser.getInt("defaultZoom");
+                if (zoom < 50 || zoom > 200) throw new IllegalArgumentException("縮放範圍需 50～200");
+            }
+            if (browser.has("startUrl")) {
+                target = browser.getString("startUrl").trim();
+                if (!target.isEmpty()) {
+                    android.net.Uri uri = android.net.Uri.parse(target);
+                    if (!("https".equalsIgnoreCase(uri.getScheme()) || "http".equalsIgnoreCase(uri.getScheme()))
+                        || uri.getHost()==null || uri.getHost().isEmpty())
+                        throw new IllegalArgumentException("startUrl 必須是完整 http/https 網址");
+                }
+            }
+        }
+        if (developer != null && developer.has("scripts")) {
+            if (scripts == null) throw new IllegalArgumentException("腳本管理器尚未準備好");
+            validatedScripts = scripts.prepareImport(developer.getJSONArray("scripts"));
+        }
+        Boolean developerMode = cfg.has("developerMode") ? cfg.getBoolean("developerMode") : null;
+        Boolean enabled = developer != null && developer.has("autoScriptsEnabled")
+            ? developer.getBoolean("autoScriptsEnabled") : null;
+        Boolean sidebar = developer != null && developer.has("sidebarEnabled")
+            ? developer.getBoolean("sidebarEnabled") : null;
+        Boolean desktop = browser != null && browser.has("desktopMode")
+            ? browser.getBoolean("desktopMode") : null;
+        Integer zoom = browser != null && browser.has("defaultZoom")
+            ? browser.getInt("defaultZoom") : null;
+        // All user-provided fields passed validation; persistent write happens once.
+        SharedPreferences.Editor editor = prefs.edit().putString(STYLE, next.toString());
+        if (developerMode != null) editor.putBoolean("developer_mode_v120",developerMode);
+        if (enabled != null) editor.putBoolean("autoScriptsEnabled_v120",enabled);
+        if (sidebar != null) editor.putBoolean("developer_sidebar_v130",sidebar);
+        if (desktop != null) editor.putBoolean("desktop_v120",desktop);
+        if (zoom != null) editor.putInt("zoom_v120",zoom);
+        if (target != null) editor.putString("start_url_v130",target);
+        if (!editor.commit()) throw new IllegalStateException("無法寫入設定");
+        if (validatedScripts != null) scripts.applyPreparedImport(validatedScripts);
+        applyDesktop();
+        refreshTheme.run();
+        if (target != null && !target.isEmpty() && navigate != null) navigate.accept(target);
+    }
+
     void jsonSettings() {
-        EditText input=new EditText(activity);
-        input.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_MULTI_LINE);
-        input.setMinLines(8);
+        EditText input = new EditText(activity);
+        input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
+        input.setMinLines(9);
         input.setMaxLines(18);
         input.setTypeface(Typeface.MONOSPACE);
-        LinearLayout layout=new LinearLayout(activity);
-        layout.setOrientation(LinearLayout.VERTICAL);
-        layout.setPadding(dp(18),0,dp(18),0);
-        layout.addView(input);
-        new AlertDialog.Builder(activity).setTitle("JSON 設定")
-          .setView(layout).setPositiveButton("匯入",(d,w)->{
-              try {
-                  JSONObject cfg=new JSONObject(input.getText().toString());
-                  if(cfg.has("schemaVersion") && cfg.getInt("schemaVersion")!=1)
-                      throw new IllegalArgumentException("不支援的設定檔版本");
-                  JSONObject appearance=cfg.optJSONObject("appearance");
-                  JSONObject browser=cfg.optJSONObject("browser");
-                  JSONObject developer=cfg.optJSONObject("developer");
-                  JSONObject next=style();
-                  if(appearance!=null) {
-                      JSONArray keys=appearance.names();
-                      if(keys!=null)for(int i=0;i<keys.length();i++) {
-                          String k=keys.getString(i);
-                          Object v=appearance.get(k);
-                          if(k.equals("preset")) {
-                              int idx=appearance.getInt("preset");
-                              if(idx<0||idx>=PRESETS.length)throw new IllegalArgumentException("風格不存在");
-                          }
-                          if(k.endsWith("Color"))Color.parseColor(String.valueOf(v));
-                          if(k.equals("toolbarPosition") && !("top".equals(v)||"bottom".equals(v)))throw new IllegalArgumentException("位置無效");
-                          next.put(k,v);
-                      }
-                  }
-                  // Validate before making any persistent changes.
-                  if(browser!=null && browser.has("defaultZoom")) {
-                      int z=browser.getInt("defaultZoom");
-                      if(z<50||z>200)throw new IllegalArgumentException("縮放範圍需 50–200");
-                  }
-                  SharedPreferences.Editor editor=prefs.edit();
-                  editor.putString(STYLE,next.toString());
-                  if(cfg.has("developerMode"))editor.putBoolean("developer_mode_v120",cfg.getBoolean("developerMode"));
-                  if(browser!=null) {
-                      if(browser.has("defaultZoom"))editor.putInt("zoom_v120",browser.getInt("defaultZoom"));
-                      if(browser.has("desktopMode"))editor.putBoolean("desktop_v120",browser.getBoolean("desktopMode"));
-                  }
-                  if(developer!=null && developer.has("autoScriptsEnabled"))
-                      editor.putBoolean("autoScriptsEnabled_v120",developer.getBoolean("autoScriptsEnabled"));
-                  editor.apply();
-                  applyDesktop();
-                  refreshTheme.run();
-                  toast("已套用 JSON 設定");
-              } catch(Exception e){new AlertDialog.Builder(activity).setTitle("匯入失敗")
-                  .setMessage("JSON 格式或設定值無效："+e.getMessage())
-                  .setPositiveButton("確定",null).show();}
-          }).setNeutralButton("匯出",(d,w)->{
-              try {
-                  JSONObject cfg=new JSONObject();
-                  cfg.put("schemaVersion",1);
-                  cfg.put("developerMode",developerEnabled());
-                  cfg.put("appearance",style());
-                  JSONObject browser=new JSONObject();
-                  browser.put("defaultZoom",prefs.getInt("zoom_v120",100));
-                  browser.put("desktopMode",prefs.getBoolean("desktop_v120",false));
-                  browser.put("restoreLastClosedTab",true);
-                  browser.put("historyEnabled",true);
-                  cfg.put("browser",browser);
-                  JSONObject developer=new JSONObject();
-                  developer.put("autoScriptsEnabled",prefs.getBoolean("autoScriptsEnabled_v120",true));
-                  cfg.put("developer",developer);
-                  android.content.ClipboardManager clip=(android.content.ClipboardManager)
-                      activity.getSystemService(Activity.CLIPBOARD_SERVICE);
-                  clip.setPrimaryClip(android.content.ClipData.newPlainText("browser-settings.json",cfg.toString(2)));
-                  toast("設定 JSON 已複製");
-              }catch(Exception e){toast("匯出失敗");}
-          }).setNegativeButton("取消",null).show();
+        input.setTextSize(12);
+        LinearLayout panel = new LinearLayout(activity);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(18),0,dp(18),0);
+        panel.addView(input);
+        AlertDialog dialog = new AlertDialog.Builder(activity).setTitle("JSON 設定")
+            .setView(panel).setPositiveButton("匯入",null)
+            .setNeutralButton("匯出",null)
+            .setNegativeButton("取消",(d,w)->{}).create();
+        dialog.setOnShowListener(d -> {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+                try {
+                    importConfig(input.getText().toString());
+                    toast("已套用設定與腳本");
+                    dialog.dismiss();
+                } catch(Exception e) {
+                    new AlertDialog.Builder(activity).setTitle("匯入失敗")
+                        .setMessage(e.getMessage()).setPositiveButton("確定",null).show();
+                }
+            });
+            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(v -> {
+                try {
+                    String json = exportConfig().toString(2);
+                    input.setText(json);
+                    android.content.ClipboardManager clipboard = (android.content.ClipboardManager)
+                        activity.getSystemService(Activity.CLIPBOARD_SERVICE);
+                    clipboard.setPrimaryClip(android.content.ClipData.newPlainText("browser-settings.json",json));
+                    toast("設定 JSON 已複製");
+                } catch(Exception e) { toast("匯出失敗"); }
+            });
+        });
+        dialog.show();
     }
     private void toast(String s) {Toast.makeText(activity,s,Toast.LENGTH_SHORT).show();}
     private int dp(int value) {return (int)(value*activity.getResources().getDisplayMetrics().density+.5f);}
