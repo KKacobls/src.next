@@ -295,9 +295,9 @@ public class MainActivity extends Activity {
                 if (!request.isForMainFrame()) return false;
                 String url = request.getUrl().toString();
                 String scheme = request.getUrl().getScheme();
-                if (scheme == null || scheme.equals("http") || scheme.equals("https") ||
-                        scheme.equals("about") || scheme.equals("data") || scheme.equals("blob") ||
-                        scheme.equals("javascript")) return false;
+                if ("http".equals(scheme) || "https".equals(scheme)) return maybeHandleWebAppLink(url);
+                if (scheme == null || scheme.equals("about") || scheme.equals("data") ||
+                        scheme.equals("blob") || scheme.equals("javascript")) return false;
                 openExternalLink(url);
                 return true;
             }
@@ -463,6 +463,7 @@ public class MainActivity extends Activity {
         }
         if (value.equalsIgnoreCase("about:blank")) { showHome(); return; }
         if (value.matches("(?i)^https?://.*")) {
+            if (maybeHandleWebAppLink(value)) return;
             webView.loadUrl(value);
         } else if (value.contains(" ") || !(value.contains(".") || value.startsWith("localhost") || value.contains(":"))) {
             webView.loadUrl("https://www.google.com/search?q=" + Uri.encode(value));
@@ -1135,10 +1136,42 @@ public class MainActivity extends Activity {
     }
 
     /** Always show origin, destination and target application before external navigation. */
-    private void openExternalLink(String url) {
+    private boolean maybeHandleWebAppLink(String url) {
+        try {
+            Uri uri=Uri.parse(url);
+            if(!"http".equalsIgnoreCase(uri.getScheme()) &&
+               !"https".equalsIgnoreCase(uri.getScheme())) return false;
+            Intent specific=new Intent(Intent.ACTION_VIEW,uri);
+            specific.addCategory(Intent.CATEGORY_BROWSABLE);
+            Intent generic=new Intent(Intent.ACTION_VIEW,Uri.parse("https://www.example.org/"));
+            generic.addCategory(Intent.CATEGORY_BROWSABLE);
+            java.util.HashSet<String> browsers=new java.util.HashSet<>();
+            for(android.content.pm.ResolveInfo info:getPackageManager().queryIntentActivities(
+                    generic,android.content.pm.PackageManager.MATCH_DEFAULT_ONLY)){
+                if(info.activityInfo!=null)browsers.add(info.activityInfo.packageName);
+            }
+            for(android.content.pm.ResolveInfo info:getPackageManager().queryIntentActivities(
+                    specific,android.content.pm.PackageManager.MATCH_DEFAULT_ONLY)){
+                if(info.activityInfo==null)continue;
+                String name=info.activityInfo.packageName;
+                if(name.equals(getPackageName())||browsers.contains(name))continue;
+                if(!info.activityInfo.exported)continue;
+                Intent targeted=new Intent(Intent.ACTION_VIEW,uri);
+                targeted.addCategory(Intent.CATEGORY_BROWSABLE);
+                targeted.setPackage(name);
+                openExternalLink(url,targeted);
+                return true;
+            }
+        }catch(Exception ignored){}
+        return false;
+    }
+
+    private void openExternalLink(String url) {openExternalLink(url,null);}
+    private void openExternalLink(String url, Intent preselected) {
         try {
             Intent external;
-            if (url.startsWith("intent://")) {
+            if (preselected!=null) external=preselected;
+            else if (url.startsWith("intent://")) {
                 external=Intent.parseUri(url,Intent.URI_INTENT_SCHEME);
                 external.addCategory(Intent.CATEGORY_BROWSABLE);
                 external.setComponent(null);
