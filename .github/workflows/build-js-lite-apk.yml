@@ -1,4 +1,5 @@
-name: Build JS Lite Browser v1.3.0 APK
+name: JS Lite Browser v1.3.1 - stable APK signing
+
 on:
   push:
     branches: [js-lite-browser-build]
@@ -6,16 +7,21 @@ on:
       - 'js-lite-browser/**'
       - '.github/workflows/build-js-lite-apk.yml'
   workflow_dispatch:
-concurrency:
-  group: js-lite-browser-build-release
-  cancel-in-progress: true
+
 permissions:
   contents: write
+
+concurrency:
+  group: js-lite-browser-stable-release
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -23,37 +29,146 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.11.1'
-      - name: Compile Android debug APK
+
+      - name: Compile and test Android source (not for distribution)
         working-directory: js-lite-browser
         run: gradle assembleDebug --no-daemon --stacktrace
-      - name: Check generated APK
-        run: |
-          test -s js-lite-browser/app/build/outputs/apk/debug/app-debug.apk
-          cp js-lite-browser/app/build/outputs/apk/debug/app-debug.apk JS-Lite-Browser-v1.3.0.apk
-          sha256sum JS-Lite-Browser-v1.3.0.apk
-      - uses: actions/upload-artifact@v4
-        with:
-          name: JS-Lite-Browser-v1.3.0-APK
-          path: JS-Lite-Browser-v1.3.0.apk
-          if-no-files-found: error
-          retention-days: 30
-      - name: Publish APK to GitHub Releases
+
+      - name: Check stable signing secret
+        id: signing
+        shell: bash
         env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: js-lite-browser-v1.3.0
+          SIGNING_PASSWORD: ${{ secrets.JSLITE_SIGNING_PASSWORD }}
         run: |
-          set -e
-          latest="$(gh api "repos/$GITHUB_REPOSITORY/branches/js-lite-browser-build" --jq '.commit.sha')"
-          if [ "$latest" != "$GITHUB_SHA" ]; then
-            echo "A newer commit is available; skip publishing stale APK."
+          set -euo pipefail
+          if [[ -z "$SIGNING_PASSWORD" ]]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Android source compiled. Stable APK is NOT published until JSLITE_SIGNING_PASSWORD is set."
+            echo "Android source compiled; no APK published until the signing secret is configured." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$TAG" JS-Lite-Browser-v1.3.0.apk --clobber --repo "$GITHUB_REPOSITORY"
+          if [[ ! "$SIGNING_PASSWORD" =~ ^[a-zA-Z0-9_-]{32,128}$ ]]; then
+            echo "::error::JSLITE_SIGNING_PASSWORD must be 32-128 random ASCII characters (letters, digits, _ or -)."
+            exit 1
+          fi
+          echo "enabled=true" >> "$GITHUB_OUTPUT"
+          echo "Using stable, encrypted signing keystore." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Restore or initialize the persistent signing keystore
+        if: steps.signing.outputs.enabled == 'true'
+        shell: bash
+        env:
+          SIGNING_PASSWORD: ${{ secrets.JSLITE_SIGNING_PASSWORD }}
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p "$RUNNER_TEMP/jslite-signing" signing
+          file="$RUNNER_TEMP/jslite-signing/jslite-release.p12"
+          encrypted="signing/jslite-release-keystore.p12.enc"
+          fingerprint="signing/jslite-release-cert-sha256.txt"
+          if [[ -s "$encrypted" && -s "$fingerprint" ]]; then
+            echo "Restoring existing signing key; no new key will be generated."
+            openssl enc -d -aes-256-cbc -pbkdf2 -iter 300000 \
+              -in "$encrypted" -out "$file" -pass env:SIGNING_PASSWORD
+          elif [[ -e "$encrypted" || -e "$fingerprint" ]]; then
+            echo "::error::Incomplete signing backup. Refusing to rotate certificate."
+            exit 1
           else
-            gh release create "$TAG" JS-Lite-Browser-v1.3.0.apk \
-              --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-              --title "JS Lite Browser v1.3.0 Android APK" \
-              --notes "New nine-action browser menu, persistent or session scripts via JSON, visual themes, gated developer swipe drawer, downloads, external app confirmations, default browser setup, adaptive icon. Android 8+. Debug build." \
+            echo "First stable build: creating a one-time 40-year Android signing key."
+            keytool -genkeypair -noprompt \
+              -storetype PKCS12 -keystore "$file" \
+              -alias jslite-browser \
+              -storepass "$SIGNING_PASSWORD" -keypass "$SIGNING_PASSWORD" \
+              -keyalg RSA -keysize 3072 -sigalg SHA256withRSA \
+              -validity 14610 -dname "CN=JS Lite Browser, O=Personal Builds, C=TW"
+            openssl enc -aes-256-cbc -salt -pbkdf2 -iter 300000 \
+              -in "$file" -out "$encrypted" -pass env:SIGNING_PASSWORD
+          fi
+          keytool -list -storetype PKCS12 -keystore "$file" \
+            -alias jslite-browser -storepass "$SIGNING_PASSWORD" > /dev/null
+          keytool -exportcert -storetype PKCS12 -keystore "$file" \
+            -alias jslite-browser -storepass "$SIGNING_PASSWORD" \
+            > "$RUNNER_TEMP/jslite-signing/cert.der"
+          actual="$(sha256sum "$RUNNER_TEMP/jslite-signing/cert.der" | awk '{print $1}')"
+          if [[ -s "$fingerprint" ]]; then
+            expected="$(tr -d '\r\n ' < "$fingerprint")"
+            if [[ "$actual" != "$expected" ]]; then
+              echo "::error::Signing certificate changed. Update was blocked to protect installed apps."
+              exit 1
+            fi
+          else
+            printf '%s\n' "$actual" > "$fingerprint"
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add "$encrypted" "$fingerprint"
+            git commit -m "Back up encrypted, stable Android signing key and pin certificate"
+            git push origin HEAD:js-lite-browser-build
+            # This commit only adds the encrypted signing backup, not app code.
+          fi
+          echo "Certificate fingerprint pinned: $actual"
+
+      - name: Build signed release APK
+        if: steps.signing.outputs.enabled == 'true'
+        working-directory: js-lite-browser
+        env:
+          JSLITE_STORE_FILE: ${{ runner.temp }}/jslite-signing/jslite-release.p12
+          JSLITE_STORE_PASSWORD: ${{ secrets.JSLITE_SIGNING_PASSWORD }}
+        run: |
+          set -euo pipefail
+          grep -Eq "versionCode[[:space:]]+9" app/build.gradle
+          grep -Eq "versionName[[:space:]]+'1.3.1'" app/build.gradle
+          gradle assembleRelease --no-daemon --stacktrace
+
+      - name: Verify certificate, package and artifact
+        if: steps.signing.outputs.enabled == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk="js-lite-browser/app/build/outputs/apk/release/app-release.apk"
+          test -s "$apk"
+          apksigner="$(find "$ANDROID_HOME/build-tools" -maxdepth 2 -type f -name apksigner | sort -V | tail -1)"
+          if [[ -z "$apksigner" ]]; then echo "::error::apksigner not installed"; exit 1; fi
+          "$apksigner" verify --verbose --print-certs "$apk"
+          actual="$("$apksigner" verify --print-certs "$apk" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | head -1)"
+          expected="$(tr -d '\r\n ' < signing/jslite-release-cert-sha256.txt)"
+          if [[ "$actual" != "$expected" ]]; then
+            echo "::error::Published APK certificate does not match the pinned stable certificate."
+            exit 1
+          fi
+          cp "$apk" JS-Lite-Browser-v1.3.1.apk
+          sha256sum JS-Lite-Browser-v1.3.1.apk
+          printf 'APK certificate SHA-256: %s\n' "$actual" >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: steps.signing.outputs.enabled == 'true'
+        with:
+          name: JS-Lite-Browser-v1.3.1-STABLE-APK
+          path: JS-Lite-Browser-v1.3.1.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish stable-signed APK
+        if: steps.signing.outputs.enabled == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: js-lite-browser-v1.3.1
+        shell: bash
+        run: |
+          set -euo pipefail
+          current="$(git rev-parse HEAD)"
+          remote="$(gh api "repos/$GITHUB_REPOSITORY/branches/js-lite-browser-build" --jq '.commit.sha')"
+          if [[ "$remote" != "$current" ]]; then
+            echo "::error::Branch moved; refusing to publish an outdated APK."
+            exit 1
+          fi
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" JS-Lite-Browser-v1.3.1.apk --clobber \
+              --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG" JS-Lite-Browser-v1.3.1.apk \
+              --repo "$GITHUB_REPOSITORY" --target "$current" \
+              --title "JS Lite Browser v1.3.1 - Stable Signed APK" \
+              --notes "Stable Android signing certificate retained across subsequent builds. One-time migration from old ephemeral-debug-signed APK may require backing up data and uninstalling it. Android 8+. See SIGNING.md." \
               --prerelease
           fi
+          echo "Stable-signed APK published: $TAG" >> "$GITHUB_STEP_SUMMARY"
