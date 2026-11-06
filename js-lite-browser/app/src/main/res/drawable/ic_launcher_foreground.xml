@@ -1,15 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Clean browser-globe adaptive launcher icon; no terminal, code or command symbols. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp" android:height="108dp"
     android:viewportWidth="108" android:viewportHeight="108">
-    <path android:fillColor="#FFFFFF"
-        android:pathData="M54,23 A31,31 0,1 1,54,85 A31,31 0,1 1,54,23"/>
-    <path android:fillColor="#1764CF"
-        android:pathData="M54,28 A26,26 0,1 1,54,80 A26,26 0,1 1,54,28"/>
-    <path android:strokeColor="#FFFFFF" android:strokeWidth="3"
-        android:pathData="M28,54 L80,54 M54,28 C36,42 36,66 54,80 M54,28 C72,42 72,66 54,80"/>
-    <path android:fillColor="#FFFFFF" android:pathData="M24,50 L47,50 L47,77 L24,77 Z"/>
-    <path android:fillColor="#1D3779" android:pathData="M27,54 L38,54 L33,60 L38,66 L27,66 L30,60 Z"/>
-    <path android:fillColor="#FFFFFF" android:pathData="M61,43 L84,43 L84,70 L61,70 Z"/>
-    <path android:strokeColor="#1D3779" android:strokeWidth="2.5" android:strokeLineCap="round"
-        android:pathData="M66,51 L71,56 L66,61 M74,62 L79,62"/>
+    <!-- Circular globe silhouette -->
+    <path android:fillColor="#00000000"
+        android:strokeColor="#FFFFFFFF" android:strokeWidth="5"
+        android:strokeLineCap="round"
+        android:pathData="M54,24 A30,30 0,1 1,54,84 A30,30 0,1 1,54,24" />
+    <!-- Longitude: smooth meridians -->
+    <path android:fillColor="#00000000"
+        android:strokeColor="#FFFFFFFF" android:strokeWidth="3.6"
+        android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:pathData="M54,24 C44,31 40,43 40,54 C40,65 44,77 54,84
+                          M54,24 C64,31 68,43 68,54 C68,65 64,77 54,84" />
+    <!-- Equator and latitude arcs -->
+    <path android:fillColor="#00000000"
+        android:strokeColor="#FFFFFFFF" android:strokeWidth="3.6"
+        android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:pathData="M24,54 L84,54
+                          M29,38 C44,46 64,46 79,38
+                          M29,70 C44,62 64,62 79,70" />
 </vector>
