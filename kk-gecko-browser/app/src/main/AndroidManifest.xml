@@ -6,7 +6,7 @@
         android:name=".BrowserApp"
         android:allowBackup="false"
         android:label="KK瀏覽器・油猴版"
-        android:icon="@android:drawable/ic_menu_compass"
+        android:icon="@drawable/ic_kk_gecko"
         android:theme="@android:style/Theme.Material.Light.NoActionBar"
         android:usesCleartextTraffic="false">
         <activity
