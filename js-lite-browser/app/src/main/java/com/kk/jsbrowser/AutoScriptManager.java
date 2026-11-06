@@ -33,6 +33,7 @@ import java.util.regex.Pattern;
 final class AutoScriptManager {
     interface ConsoleLogger { void log(String message); }
     private static final String STORAGE = "user_scripts_v1";
+    private static JSONArray sessionOnlyScripts = new JSONArray();
     private final Activity activity;
     private final WebView browser;
     private final SharedPreferences prefs;
@@ -131,22 +132,44 @@ final class AutoScriptManager {
         } catch (Exception error) {
             logger.log("[AUTO JS] Could not read saved scripts: " + error.getMessage());
         }
+        // In-process scripts survive configuration/activity recreation but never go to disk.
+        for (int i=0; i<sessionOnlyScripts.length(); i++) {
+            JSONObject data=sessionOnlyScripts.optJSONObject(i);
+            if(data==null)continue;
+            Script script=new Script();
+            script.id=data.optString("id",script.id);
+            script.name=data.optString("name");
+            script.matches=data.optString("matches");
+            script.code=data.optString("code");
+            script.enabled=data.optBoolean("enabled",true);
+            script.persist=false;
+            boolean replaced=false;
+            for(int j=0;j<scripts.size();j++){
+                if(scripts.get(j).name.equalsIgnoreCase(script.name)){
+                    scripts.set(j,script);
+                    replaced=true;break;
+                }
+            }
+            if(!replaced)scripts.add(script);
+        }
     }
 
     private void save() {
         JSONArray json = new JSONArray();
+        JSONArray ephemeral = new JSONArray();
         try {
             for (Script s : scripts) {
-                if (!s.persist) continue;
                 JSONObject o = new JSONObject();
                 o.put("id", s.id);
                 o.put("name", s.name);
                 o.put("matches", s.matches);
                 o.put("code", s.code);
                 o.put("enabled", s.enabled);
-                o.put("persist", true);
-                json.put(o);
+                o.put("persist", s.persist);
+                if (s.persist) json.put(o);
+                else ephemeral.put(o);
             }
+            sessionOnlyScripts=ephemeral;
             prefs.edit().putString(STORAGE, json.toString()).apply();
             changed.run();
         } catch (Exception e) {
