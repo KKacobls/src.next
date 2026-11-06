@@ -1,6 +1,20 @@
-# JS Lite Browser for Android — v1.3.2
+# KK瀏覽器 for Android — v1.3.3
 
-This is the dedicated **JS Lite Browser** branch of `KKacobls/src.next`. It builds a standalone Android WebView browser, not the massive Kiwi Chromium source tree. The Kiwi default branch remains unchanged.
+這是 KK瀏覽器 Android WebView App，GitHub 分支保留為 `js-lite-browser-build`，原本 Kiwi/其他程式碼不受影響。
+
+## 安裝衝突修正：從 v1.3.3 起使用獨立 App 身分
+
+- **KK瀏覽器**：`com.kk.kkbrowser`（新套件，`versionCode 11`）。
+- **舊 JS 極簡瀏覽器**：`com.kk.jsbrowser`。兩者可同時安裝，避免碰到舊 App 的簽章衝突。
+- 舊 App 的 Cookie、歷史紀錄、資料庫等不會自動轉移。請在舊版匯出 JSON（腳本、設定），再在 KK瀏覽器的**懶人模式**匯入。無法透過 JSON 匯出 Cookie。
+- 固定簽章加密備份與已釘選的 SHA-256 憑證不變；未來 KK瀏覽器版本必須繼續使用 `com.kk.kkbrowser` + 同簽章 + 更高 `versionCode`，才可覆蓋更新。
+- 已裝 v1.3.1 / v1.3.2 的使用者若安裝 v1.3.3，會看到**另一個獨立 App**，這是刻意的套件遷移，不是原地覆蓋升級。
+
+## 懶人模式（JSON 直接套用）
+
+從右上角 `⋯ → 懶人模式（JSON 匯入／匯出）` 貼上 JSON。支援最簡單的 `url + js` 寫法，會自動建立匹配該網址網域的 JS 腳本，啟用自動 JS，並前往該網址；`persist: true` 永久保存，`persist: false` 僅本次 App 程序有效。
+
+[一鍵複製範例](js-lite-browser/examples/lazy-auto-js.json)｜[完整 JSON 說明](js-lite-browser/JSON_CONFIG.md)。
 
 ## 新版功能
 
@@ -11,7 +25,7 @@ This is the dedicated **JS Lite Browser** branch of `KKacobls/src.next`. It buil
 - 外部 App 跳轉確認：來源網址、目的地網址、目標 App、套件名稱與圖示（若系統可解析），可記住選擇。
 - 自訂 Adaptive Launcher Icon。
 - 版本號連按 7 下啟用永久開發者模式（不以中途 Toast 阻擋操作）。
-- 開發者專用 **JS 側邊工具面板**：從 `⋯ → 開發者工具 → 開啟 JS 側邊工具` 點選，不使用滑動手勢。面板內可直接輸入 JS，按「執行 JS」在目前網頁執行；留在面板外的網頁仍可操作。
+- 開發者專用 **側邊開發者工具**：從 `⋯ → 開發者工具 → 開啟側邊開發者工具` 點選，不使用滑動手勢。內含 JS 即時執行、Console、自動腳本、原始碼、CSS、風格、工具列位置及 JSON；仍可操作沒有被面板覆蓋的網頁。
 - 自動 JS 管理、JS 主控台、目前 DOM HTML 原始碼檢視、可視化介面風格、可調整 HSV 顏色。
 - 內建十種帶預覽的風格選項，並可儲存、修改名稱、刪除自訂樣式。
 - JSON 匯入匯出支援 `browser.startUrl`、`developer.scripts`，使用與原生管理頁面相同的腳本存放格式。
@@ -36,7 +50,7 @@ cd js-lite-browser
 gradle assembleDebug --no-daemon
 ```
 
-**經過固定簽章驗證的更新 APK**：請至 GitHub Releases 中下載 `js-lite-browser-v1.3.2`。憑證沿用 v1.3.1，若手機目前是 v1.3.1 可直接覆蓋安裝，無須卸載。
+**已固定簽章的 KK瀏覽器 APK**：請至 GitHub Releases 下載 `kk-browser-v1.3.3`。此版本使用**新套件 ID**，無須先卸載舊 JS 極簡瀏覽器，但新舊資料互不共用。
 
 `gradle assembleDebug` 僅作開發與編譯測試；正式更新使用 `assembleRelease` 和固定金鑰。打包成功不代表已在實體 Android 手機測試。
 
