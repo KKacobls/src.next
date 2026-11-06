@@ -1,0 +1,7 @@
+{
+  "url": "https://example.com/",
+  "name": "進站自動加上藍色邊框",
+  "js": "document.body.style.border = '8px solid #2563eb'; console.log('KK瀏覽器：自動 JS 已執行');",
+  "enabled": true,
+  "persist": true
+}
