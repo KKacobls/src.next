@@ -5,7 +5,7 @@
 ## 技術架構
 
 - App 套件名稱：`com.kk.kkmonkey`（與 `com.kk.kkbrowser`、`com.kk.jsbrowser` 都不同）。
-- 瀏覽引擎：Mozilla GeckoView 158，直接內嵌 Firefox 的網頁與 WebExtensions 執行引擎。
+- 瀏覽引擎：Mozilla GeckoView 143，直接內嵌 Firefox 的網頁與 WebExtensions 執行引擎。
 - 擴充套件：**真正的 Tampermonkey**，而不是自行仿製的 JavaScript 執行器。
 - 沒有把 Tampermonkey 的 CRX、XPI 或私有原始碼放進 APK。
 - 使用者點擊 **安裝油猴**，App 會從 Mozilla AMO 官方 API
