@@ -74,6 +74,9 @@ public class MainActivity extends Activity {
     private LinearLayout browserRoot;
     private FrameLayout browserBar;
     private BrowserExtras extras;
+    private DownloadPage downloads;
+    private View sidebarOverlay;
+    private float edgeTouchStartX, edgeTouchStartY;
     private TextView pageTitle;
     private TextView pageHost;
     private LinearLayout headerInfo;
@@ -163,8 +166,8 @@ public class MainActivity extends Activity {
         headerInfo.addView(pageHost);
 
         // The first layer stays minimal; editing the URL and all tools live under ⋮.
-        headerInfo.setOnClickListener(v -> showOverflowMenu(overflowButton));
-        headerInfo.setOnLongClickListener(v -> { showOverflowMenu(overflowButton); return true; });
+        headerInfo.setOnClickListener(v -> showUrlDialog());
+        headerInfo.setOnLongClickListener(v -> { showUrlDialog(); return true; });
         bar.setOnLongClickListener(v -> { showOverflowMenu(overflowButton); return true; });
 
         overflowButton = new TextView(this);
@@ -225,8 +228,11 @@ public class MainActivity extends Activity {
                 getSharedPreferences(PREFS, MODE_PRIVATE), this::appendLog, () -> {});
         configureDownloads();
         extras = new BrowserExtras(this, webView, this::applyCustomTheme);
+        extras.bindActions(autoScripts, this::navigate);
         extras.applyDesktop();
+        downloads = new DownloadPage(this);
         applyCustomTheme();
+        setupDeveloperSwipe(frame);
 
         if (savedInstanceState != null) {
             webView.restoreState(savedInstanceState);
@@ -234,9 +240,11 @@ public class MainActivity extends Activity {
             homeView.setVisibility(restoredUrl == null || restoredUrl.equals("about:blank") ? View.VISIBLE : View.GONE);
             refreshHeader();
         } else if (!openExternalIntent(getIntent())) {
-            showHome();
-            Toast.makeText(this, R.string.menu_hint, Toast.LENGTH_LONG).show();
+            String configured = extras.startUrl();
+            if (!configured.isEmpty()) navigate(configured);
+            else showHome();
         }
+        askDefaultBrowserOnce();
     }
 
     private View buildHome() {
@@ -336,7 +344,9 @@ public class MainActivity extends Activity {
                 return true;
             }
             @Override public boolean onShowFileChooser(WebView view, ValueCallback<Uri[]> callback, FileChooserParams params) {
-                if (filePickerCallback != null) filePickerCallback.onReceiveValue(null);
+                if (extras != null) extras.rememberClosed();
+        closeSidebar();
+        if (filePickerCallback != null) filePickerCallback.onReceiveValue(null);
                 filePickerCallback = callback;
                 try {
                     startActivityForResult(params.createIntent(), PICK_FILE);
@@ -486,38 +496,41 @@ public class MainActivity extends Activity {
         panel.setPadding(dp(12), dp(12), dp(12), dp(8));
         panel.setBackground(rounded(Color.WHITE, 19));
 
-        LinearLayout shortcuts = new LinearLayout(this);
-        shortcuts.setOrientation(LinearLayout.HORIZONTAL);
-        shortcuts.setGravity(Gravity.CENTER_VERTICAL);
-        panel.addView(shortcuts, new LinearLayout.LayoutParams(-1, dp(90)));
-        addMenuShortcut(shortcuts, "⌕", R.string.open_url, this::showUrlDialog);
-        addMenuShortcut(shortcuts, "↻", R.string.reload, () -> webView.reload());
+        String[][] actions = {
+            {"⌕","網址"}, {"↻","重新整理"}, {"‹","返回"},
+            {"⌂","首頁"}, {"↗","分享"}, {"◷","紀錄"},
+            {"−","縮小"}, {"+","放大"},
+            {"▣", getSharedPreferences(PREFS,MODE_PRIVATE).getBoolean("desktop_v120",false) ? "手機" : "電腦"}
+        };
+        Runnable[] commands = {
+            this::showUrlDialog, () -> webView.reload(),
+            () -> {if(webView.canGoBack())webView.goBack();else Toast.makeText(this,R.string.no_history,Toast.LENGTH_SHORT).show();},
+            this::showHome, this::sharePage, extras::showHistory,
+            () -> extras.zoom(false), () -> extras.zoom(true), extras::desktopToggle
+        };
+        for(int row=0;row<3;row++) {
+            LinearLayout gridRow = new LinearLayout(this);
+            gridRow.setOrientation(LinearLayout.HORIZONTAL);
+            panel.addView(gridRow,new LinearLayout.LayoutParams(-1,dp(73)));
+            for(int col=0;col<3;col++) {
+                int idx=row*3+col;
+                addGridShortcut(gridRow,actions[idx][0],actions[idx][1],commands[idx]);
+            }
+        }
         addMenuDivider(panel);
-
-        addMenuItem(panel, "‹", R.string.back, () -> {
-            if (webView.canGoBack()) webView.goBack();
-            else Toast.makeText(this, R.string.no_history, Toast.LENGTH_SHORT).show();
+        addMenuItemLabel(panel,"↶","重新開啟最近關閉頁面",()->{
+            extras.reopenClosed();homeView.setVisibility(View.GONE);
         });
-        addMenuItem(panel, "⌂", R.string.home, this::showHome);
-        addMenuItem(panel, "↗", R.string.share, this::sharePage);
-        addMenuItem(panel, "⚙", R.string.app_permissions, this::openAppPermissions);
-        addMenuDivider(panel);
-        addMenuItemLabel(panel, "◷", "瀏覽紀錄", extras::showHistory);
-        addMenuItemLabel(panel, "↶", "重新開啟最近關閉頁面", () -> {
-            extras.reopenClosed(); homeView.setVisibility(View.GONE);
-        });
-        addMenuItemLabel(panel, "⌕", "在網頁中搜尋", extras::searchInPage);
-        addMenuItemLabel(panel, "−", "縮小網頁（−10%）", () -> extras.zoom(false));
-        addMenuItemLabel(panel, "+", "放大網頁（+10%）", () -> extras.zoom(true));
-        addMenuItemLabel(panel, "▣", "電腦版／手機版", extras::desktopToggle);
-        addMenuDivider(panel);
-        addMenuItemLabel(panel, "{}", "JSON 設定匯入／匯出", extras::jsonSettings);
-        addMenuItem(panel, "文", R.string.language, this::chooseLanguage);
-        addMenuItem(panel, "⌫", R.string.clear_data, this::clearBrowsingData);
+        addMenuItemLabel(panel,"⌕","在網頁中搜尋",extras::searchInPage);
+        addMenuItemLabel(panel,"↓","下載紀錄",downloads::show);
+        addMenuItemLabel(panel,"⚑","設定預設瀏覽器",this::requestDefaultBrowser);
+        addMenuItemLabel(panel,"{}","JSON 設定匯入／匯出",extras::jsonSettings);
+        addMenuItemLabel(panel,"文","語言設定",this::chooseLanguage);
+        addMenuItem(panel,"⚙",R.string.app_permissions,this::openAppPermissions);
         if (extras.developerEnabled()) {
             addMenuDivider(panel);
-            addMenuItemLabel(panel, "⌘", "開發者工具", this::showDeveloperTools);
-            addMenuItemLabel(panel, "◇", "關閉開發者模式", extras::disableDeveloper);
+            addMenuItemLabel(panel,"⌘","開發者工具",this::showDeveloperTools);
+            addMenuItemLabel(panel,"◇","關閉開發者模式",()->{extras.disableDeveloper();closeSidebar();});
         }
         addMenuDivider(panel);
 
@@ -539,7 +552,7 @@ public class MainActivity extends Activity {
         anchor.getLocationOnScreen(pos);
         int top = pos[1] + anchor.getHeight() - dp(3);
         int available = getResources().getDisplayMetrics().heightPixels - top - dp(16);
-        int height = Math.min(dp(640), Math.max(dp(225), available));
+        int height = Math.min(dp(690), Math.max(dp(225), available));
         PopupWindow popup = new PopupWindow(scroll, width, height, true);
         popup.setBackgroundDrawable(rounded(Color.WHITE, 19));
         popup.setElevation(dp(13));
@@ -550,6 +563,27 @@ public class MainActivity extends Activity {
         });
         overflowPopup = popup;
         popup.showAtLocation(anchor, Gravity.TOP | Gravity.RIGHT, dp(10), top);
+    }
+
+    private void addGridShortcut(LinearLayout parent,String glyph,String title,Runnable command) {
+        LinearLayout cell=new LinearLayout(this);
+        cell.setOrientation(LinearLayout.VERTICAL);
+        cell.setGravity(Gravity.CENTER);
+        cell.setContentDescription(title);
+        parent.addView(cell,new LinearLayout.LayoutParams(0,-1,1));
+        TextView symbol=new TextView(this);
+        symbol.setText(glyph);
+        symbol.setTextColor(Color.rgb(28,32,32));
+        symbol.setTextSize(TypedValue.COMPLEX_UNIT_SP,25);
+        symbol.setGravity(Gravity.CENTER);
+        cell.addView(symbol,new LinearLayout.LayoutParams(-1,dp(40)));
+        TextView text=new TextView(this);
+        text.setText(title);
+        text.setTextSize(TypedValue.COMPLEX_UNIT_SP,11);
+        text.setTextColor(Color.rgb(75,76,76));
+        text.setGravity(Gravity.CENTER);
+        cell.addView(text);
+        cell.setOnClickListener(v->{dismissOverflow();command.run();});
     }
 
     private void addMenuShortcut(LinearLayout parent, String glyph, int title, Runnable command) {
@@ -626,19 +660,79 @@ public class MainActivity extends Activity {
     }
 
     private void showDeveloperTools() {
-        String[] options={"JS 主控台","自動 JS 腳本","檢視網頁原始碼","CSS／介面屬性","10 種頂部與底部樣式","工具列位置","關閉開發者模式"};
+        if(!extras.developerEnabled()) return;
+        String toggle = extras.sidebarEnabled() ? "停用右側快捷欄" : "啟用右側快捷欄";
+        String[] options={"JS 主控台","自動 JS 腳本","檢視網頁原始碼","CSS／介面屬性","介面風格","工具列位置",toggle,"JSON 設定"};
         new AlertDialog.Builder(this).setTitle("開發者工具")
             .setItems(options,(d,which)->{
-                switch(which) {
+                switch(which){
                     case 0: showConsole();break;
                     case 1: autoScripts.showManager();break;
                     case 2: extras.viewSource();break;
                     case 3: extras.editStyle();break;
                     case 4: extras.choosePreset();break;
                     case 5: extras.chooseToolbarPosition();break;
-                    case 6: extras.disableDeveloper();break;
+                    case 6: extras.toggleSidebar();break;
+                    case 7: extras.jsonSettings();break;
                 }
-            }).setNegativeButton("取消",null).show();
+            }).setNegativeButton("關閉",null).show();
+    }
+
+    @SuppressLint("ClickableViewAccessibility")
+    private void setupDeveloperSwipe(FrameLayout frame) {
+        View edge=new View(this);
+        FrameLayout.LayoutParams edgeParams=new FrameLayout.LayoutParams(dp(16),-1,Gravity.RIGHT);
+        frame.addView(edge,edgeParams);
+        edge.setOnTouchListener((v,event)->{
+            if(extras==null || !extras.sidebarEnabled())return false;
+            if(event.getActionMasked()==android.view.MotionEvent.ACTION_DOWN){
+                edgeTouchStartX=event.getRawX();edgeTouchStartY=event.getRawY();return true;
+            }
+            if(event.getActionMasked()==android.view.MotionEvent.ACTION_UP){
+                if(edgeTouchStartX-event.getRawX()>dp(65) && Math.abs(edgeTouchStartY-event.getRawY())<dp(160)){
+                    openSidebar();return true;
+                }
+            }
+            return true;
+        });
+    }
+
+    private void openSidebar() {
+        if(extras==null || !extras.sidebarEnabled() || sidebarOverlay!=null)return;
+        FrameLayout overlay=new FrameLayout(this);
+        overlay.setBackgroundColor(0x55000000);
+        sidebarOverlay=overlay;
+        addContentView(overlay,new ViewGroup.LayoutParams(-1,-1));
+        overlay.setOnClickListener(v->closeSidebar());
+        LinearLayout drawer=new LinearLayout(this);
+        drawer.setOrientation(LinearLayout.VERTICAL);
+        drawer.setPadding(dp(14),dp(28),dp(14),dp(12));
+        drawer.setBackground(rounded(Color.WHITE,18));
+        FrameLayout.LayoutParams placement=new FrameLayout.LayoutParams(
+            Math.min(dp(294),(int)(getResources().getDisplayMetrics().widthPixels*.82f)),-1,Gravity.RIGHT);
+        overlay.addView(drawer,placement);
+        drawer.setOnClickListener(v->{});
+        TextView title=new TextView(this);
+        title.setText("開發者快捷工具");
+        title.setTextSize(20);title.setTypeface(null,Typeface.BOLD);title.setPadding(dp(8),0,0,dp(15));
+        drawer.addView(title);
+        String[] labels={"JS 主控台","自動 JS 腳本","View Source","CSS 樣式","介面風格","JSON 設定"};
+        Runnable[] actions={this::showConsole,autoScripts::showManager,extras::viewSource,
+            extras::editStyle,extras::choosePreset,extras::jsonSettings};
+        for(int i=0;i<labels.length;i++){
+            final int index=i;
+            Button button=new Button(this);
+            button.setAllCaps(false);button.setText(labels[i]);
+            drawer.addView(button,new LinearLayout.LayoutParams(-1,dp(53)));
+            button.setOnClickListener(v->{closeSidebar();actions[index].run();});
+        }
+        drawer.setTranslationX(dp(300));
+        drawer.animate().translationX(0).setDuration(185).start();
+    }
+    private void closeSidebar(){
+        if(sidebarOverlay==null)return;
+        View view=sidebarOverlay;sidebarOverlay=null;
+        if(view.getParent() instanceof ViewGroup)((ViewGroup)view.getParent()).removeView(view);
     }
 
     private void applyCustomTheme() {
@@ -939,7 +1033,8 @@ public class MainActivity extends Activity {
                 }
                 DownloadManager manager = (DownloadManager) getSystemService(DOWNLOAD_SERVICE);
                 if (manager == null) throw new IllegalStateException("No DownloadManager");
-                manager.enqueue(request);
+                long downloadId=manager.enqueue(request);
+                downloads.record(downloadId,fileName,url);
                 Toast.makeText(this, R.string.download_started, Toast.LENGTH_SHORT).show();
             } catch (Exception e) {
                 appendLog("[Download error] " + e.getMessage());
@@ -1038,25 +1133,100 @@ public class MainActivity extends Activity {
         return false;
     }
 
+    /** Always show origin, destination and target application before external navigation. */
     private void openExternalLink(String url) {
         try {
+            Intent external;
             if (url.startsWith("intent://")) {
-                Intent intent = Intent.parseUri(url, Intent.URI_INTENT_SCHEME);
-                intent.addCategory(Intent.CATEGORY_BROWSABLE);
-                intent.setComponent(null);
-                intent.setSelector(null);
-                try { startActivity(intent); }
-                catch (Exception e) {
-                    String fallback = intent.getStringExtra("browser_fallback_url");
-                    if (fallback != null && (fallback.startsWith("http://") || fallback.startsWith("https://"))) navigate(fallback);
-                    else Toast.makeText(this, R.string.unsupported_link, Toast.LENGTH_SHORT).show();
-                }
+                external=Intent.parseUri(url,Intent.URI_INTENT_SCHEME);
+                external.addCategory(Intent.CATEGORY_BROWSABLE);
+                external.setComponent(null);
+                external.setSelector(null);
             } else {
-                startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
+                external=new Intent(Intent.ACTION_VIEW,Uri.parse(url));
+                external.addCategory(Intent.CATEGORY_BROWSABLE);
             }
-        } catch (Exception e) {
-            Toast.makeText(this, R.string.unsupported_link, Toast.LENGTH_SHORT).show();
+            String source=webView==null?"":webView.getUrl();
+            android.content.pm.ResolveInfo resolved=getPackageManager().resolveActivity(external,0);
+            String packageId=external.getPackage();
+            if(packageId==null && resolved!=null && resolved.activityInfo!=null)
+                packageId=resolved.activityInfo.packageName;
+            if(packageId==null)packageId="未知";
+            String appName=resolved==null?"外部應用程式":String.valueOf(resolved.loadLabel(getPackageManager()));
+            final String targetPackage=packageId;
+            final String rememberKey="external_approval_"+targetPackage;
+            SharedPreferences p=getSharedPreferences(PREFS,MODE_PRIVATE);
+            if(p.getBoolean(rememberKey,false)){
+                try{startActivity(external);return;}catch(Exception ignored){}
+            }
+            LinearLayout details=new LinearLayout(this);
+            details.setOrientation(LinearLayout.VERTICAL);
+            details.setPadding(dp(20),dp(8),dp(20),dp(5));
+            TextView label=new TextView(this);
+            label.setText("要使用 "+appName+" 開啟這個連結嗎？");
+            label.setTextSize(18);
+            details.addView(label);
+            android.widget.CheckBox remember=new android.widget.CheckBox(this);
+            remember.setText("記住此 App 的開啟選擇");
+            TextView info=new TextView(this);
+            info.setText("來源網址：\n"+source+"\n\n目的地網址：\n"+url+
+                "\n\n應用程式：\n"+appName+"\n\n套件識別碼：\n"+targetPackage);
+            info.setTextIsSelectable(true);
+            info.setPadding(0,dp(10),0,dp(12));
+            info.setVisibility(View.GONE);
+            Button expand=new Button(this);
+            expand.setAllCaps(false);expand.setText("顯示詳細資訊 ▾");
+            expand.setOnClickListener(v->{
+                boolean show=info.getVisibility()!=View.VISIBLE;
+                info.setVisibility(show?View.VISIBLE:View.GONE);
+                expand.setText(show?"隱藏詳細資訊 ▴":"顯示詳細資訊 ▾");
+            });
+            details.addView(expand);
+            details.addView(info);
+            details.addView(remember);
+            final Intent launchIntent=external;
+            new AlertDialog.Builder(this).setView(details)
+                .setPositiveButton("在應用程式中開啟",(d,w)->{
+                    try {
+                        startActivity(launchIntent);
+                        if(remember.isChecked())p.edit().putBoolean(rememberKey,true).apply();
+                    }catch(Exception e){
+                        String fallback=launchIntent.getStringExtra("browser_fallback_url");
+                        if(fallback!=null && (fallback.startsWith("https://")||fallback.startsWith("http://")))navigate(fallback);
+                        else Toast.makeText(this,"無法開啟此應用程式",Toast.LENGTH_LONG).show();
+                    }
+                })
+                .setNegativeButton("留在瀏覽器",null).show();
+        } catch(Exception e){
+            Toast.makeText(this,"無法辨識外部連結",Toast.LENGTH_SHORT).show();
         }
+    }
+
+    private void requestDefaultBrowser(){
+        try{
+            if(android.os.Build.VERSION.SDK_INT>=29){
+                android.app.role.RoleManager role=(android.app.role.RoleManager)getSystemService(ROLE_SERVICE);
+                if(role!=null && role.isRoleAvailable(android.app.role.RoleManager.ROLE_BROWSER)){
+                    if(role.isRoleHeld(android.app.role.RoleManager.ROLE_BROWSER)){
+                        Toast.makeText(this,"已設定為預設瀏覽器",Toast.LENGTH_SHORT).show();
+                        return;
+                    }
+                    startActivityForResult(role.createRequestRoleIntent(android.app.role.RoleManager.ROLE_BROWSER),54);
+                    return;
+                }
+            }
+            startActivity(new Intent("android.settings.MANAGE_DEFAULT_APPS_SETTINGS"));
+        }catch(Exception e){openAppPermissions();}
+    }
+
+    private void askDefaultBrowserOnce(){
+        SharedPreferences p=getSharedPreferences(PREFS,MODE_PRIVATE);
+        if(p.getBoolean("default_browser_asked_v130",false))return;
+        p.edit().putBoolean("default_browser_asked_v130",true).apply();
+        new AlertDialog.Builder(this).setTitle("預設瀏覽器")
+            .setMessage("要將 JS Lite Browser 設為預設瀏覽器嗎？")
+            .setPositiveButton("設定", (d,w)->requestDefaultBrowser())
+            .setNegativeButton("稍後",null).show();
     }
 
     @Override
@@ -1068,7 +1238,8 @@ public class MainActivity extends Activity {
 
     @Override
     public void onBackPressed() {
-        if (consoleDialog != null && consoleDialog.isShowing()) consoleDialog.dismiss();
+        if (sidebarOverlay != null) closeSidebar();
+        else if (consoleDialog != null && consoleDialog.isShowing()) consoleDialog.dismiss();
         else if (overflowPopup != null && overflowPopup.isShowing()) overflowPopup.dismiss();
         else if (webView != null && webView.canGoBack()) webView.goBack();
         else super.onBackPressed();
