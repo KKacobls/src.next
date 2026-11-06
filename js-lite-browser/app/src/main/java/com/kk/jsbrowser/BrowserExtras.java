@@ -421,9 +421,82 @@ public final class BrowserExtras {
         return cfg;
     }
 
+    /**
+     * 懶人模式 (compact JSON):
+     * {"url":"https://example.com/","js":"console.log('ok')"}
+     * Expands into exactly the same durable, validated config as the full JSON format.
+     * Match defaults to the exact URL host; it never uses a wildcard covering other sites.
+     */
+    private JSONObject expandLazyConfig(JSONObject config) throws org.json.JSONException {
+        String shortcutUrl = null;
+        if (config.has("url")) shortcutUrl = config.getString("url").trim();
+        else if (config.has("startUrl")) shortcutUrl = config.getString("startUrl").trim();
+        if (shortcutUrl != null) {
+            JSONObject browser = config.optJSONObject("browser");
+            if (browser == null) {
+                if (config.has("browser")) throw new org.json.JSONException("browser 必須是物件");
+                browser = new JSONObject();
+            }
+            if (!browser.has("startUrl")) browser.put("startUrl", shortcutUrl);
+            config.put("browser", browser);
+        }
+
+        boolean compactScript = config.has("js") || config.has("code");
+        boolean topScripts = config.has("scripts");
+        if (compactScript || topScripts) {
+            JSONObject developer = config.optJSONObject("developer");
+            if (developer == null) {
+                if (config.has("developer")) throw new org.json.JSONException("developer 必須是物件");
+                developer = new JSONObject();
+            }
+            JSONArray combined = developer.optJSONArray("scripts");
+            if (combined == null) {
+                if (developer.has("scripts")) throw new org.json.JSONException("developer.scripts 必須是陣列");
+                combined = new JSONArray();
+            }
+            if (topScripts) {
+                JSONArray copied = config.getJSONArray("scripts");
+                for (int i = 0; i < copied.length(); i++) combined.put(copied.get(i));
+            }
+            if (compactScript) {
+                String code = config.has("js") ? config.getString("js") : config.getString("code");
+                if (code.trim().isEmpty()) throw new org.json.JSONException("js 不可為空");
+                String match = config.optString("match", "").trim();
+                if (match.isEmpty()) {
+                    String url = shortcutUrl;
+                    JSONObject browser = config.optJSONObject("browser");
+                    if ((url == null || url.isEmpty()) && browser != null)
+                        url = browser.optString("startUrl", "");
+                    if (url == null || url.isEmpty())
+                        throw new org.json.JSONException("請輸入 url 或 match，才能知道在哪個網站執行 JS");
+                    android.net.Uri parsed = android.net.Uri.parse(url);
+                    String scheme = parsed.getScheme();
+                    if (!(("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme))
+                        && parsed.getHost() != null && !parsed.getHost().isEmpty()))
+                        throw new org.json.JSONException("url 必須是完整 http/https 網址");
+                    match = "*://" + parsed.getHost() + "/*";
+                }
+                JSONObject script = new JSONObject();
+                String name = config.optString("name", "懶人模式腳本").trim();
+                script.put("name", name.isEmpty() ? "懶人模式腳本" : name);
+                script.put("match", match);
+                script.put("code", code);
+                script.put("enabled", config.has("enabled") ? config.getBoolean("enabled") : true);
+                script.put("persist", config.has("persist") ? config.getBoolean("persist") : true);
+                combined.put(script);
+            }
+            developer.put("scripts", combined);
+            if (!developer.has("autoScriptsEnabled"))
+                developer.put("autoScriptsEnabled", true);
+            config.put("developer", developer);
+            if (!config.has("developerMode")) config.put("developerMode", true);
+        }
+        return config;
+    }
+
     /** Fully validate before writing persistent settings or changing active scripts. */
     private void importConfig(String source) throws Exception {
-        JSONObject cfg = new JSONObject(source);
+        JSONObject cfg = expandLazyConfig(new JSONObject(source));
         if (cfg.has("schemaVersion") && cfg.getInt("schemaVersion") != 1)
             throw new IllegalArgumentException("目前支援 schemaVersion 1");
         JSONObject appearance = cfg.optJSONObject("appearance");
@@ -496,7 +569,7 @@ public final class BrowserExtras {
         panel.setOrientation(LinearLayout.VERTICAL);
         panel.setPadding(dp(18),0,dp(18),0);
         panel.addView(input);
-        AlertDialog dialog = new AlertDialog.Builder(activity).setTitle("JSON 設定")
+        AlertDialog dialog = new AlertDialog.Builder(activity).setTitle("懶人模式 · JSON 匯入／匯出")
             .setView(panel).setPositiveButton("匯入",null)
             .setNeutralButton("匯出",null)
             .setNegativeButton("取消",(d,w)->{}).create();
