@@ -212,21 +212,91 @@ public final class BrowserExtras {
         settings.setTextZoom(zoom);
     }
     void viewSource() {
-        web.evaluateJavascript("(function(){return document.documentElement.outerHTML})()",result->{
-            String html=result;
-            try { Object parsed=new org.json.JSONTokener(result).nextValue();html=String.valueOf(parsed); }
-            catch (Exception ignored) {}
-            EditText text=new EditText(activity);
-            text.setText(html);
-            text.setTypeface(Typeface.MONOSPACE);
-            text.setTextSize(11);
-            text.setTextIsSelectable(true);
-            text.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_MULTI_LINE);
-            ScrollView scroll=new ScrollView(activity);
-            scroll.addView(text);
-            new AlertDialog.Builder(activity).setTitle("網頁 HTML（目前 DOM）")
-                .setView(scroll).setPositiveButton("關閉",null).show();
-        });
+        String current=web.getUrl();
+        if(current==null || !(current.startsWith("http://") || current.startsWith("https://"))) {
+            toast("請先開啟網頁");return;
+        }
+        new AlertDialog.Builder(activity).setTitle("檢視原始碼")
+            .setItems(new String[]{"伺服器原始 HTML（HTTP 回應）","目前網頁 DOM（含 JS 修改）"},
+                (dialog,which)->{
+                    if(which==0)serverSource(current);
+                    else web.evaluateJavascript("(function(){return document.documentElement.outerHTML})()",result->{
+                        String html=result;
+                        try {html=String.valueOf(new org.json.JSONTokener(result).nextValue());}
+                        catch(Exception ignored){}
+                        showSourceText("目前 DOM",html);
+                    });
+                }).setNegativeButton("取消",null).show();
+    }
+
+    private void showSourceText(String title,String html) {
+        EditText text=new EditText(activity);
+        text.setText(html);
+        text.setTypeface(Typeface.MONOSPACE);
+        text.setTextSize(11);
+        text.setTextIsSelectable(true);
+        text.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
+        ScrollView scroll=new ScrollView(activity);
+        scroll.setFillViewport(false);
+        scroll.addView(text);
+        AlertDialog display=new AlertDialog.Builder(activity).setTitle(title)
+            .setView(scroll).setPositiveButton("關閉",null)
+            .setNeutralButton("複製",(d,w)->{
+                android.content.ClipboardManager clipboard=(android.content.ClipboardManager)
+                    activity.getSystemService(Activity.CLIPBOARD_SERVICE);
+                clipboard.setPrimaryClip(android.content.ClipData.newPlainText("view-source",html));
+            }).create();
+        display.show();
+        if(display.getWindow()!=null)display.getWindow().setLayout(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            (int)(activity.getResources().getDisplayMetrics().heightPixels*.85));
+    }
+
+    /** Get current HTML with bounded memory and background networking, avoiding any UI-thread HTTP request. */
+    private void serverSource(String url) {
+        Toast.makeText(activity,"正在取得原始 HTML",Toast.LENGTH_SHORT).show();
+        new Thread(()->{
+            java.net.HttpURLConnection connection=null;
+            try {
+                connection=(java.net.HttpURLConnection)new java.net.URL(url).openConnection();
+                connection.setRequestMethod("GET");
+                connection.setConnectTimeout(10000);
+                connection.setReadTimeout(12000);
+                connection.setInstanceFollowRedirects(false);
+                String cookie=android.webkit.CookieManager.getInstance().getCookie(url);
+                if(cookie!=null)connection.setRequestProperty("Cookie",cookie);
+                connection.setRequestProperty("User-Agent",web.getSettings().getUserAgentString());
+                connection.setRequestProperty("Accept","text/html,application/xhtml+xml,*/*");
+                int status=connection.getResponseCode();
+                if(status>=300 && status<400)
+                    throw new IllegalStateException("HTTP "+status+"，請先在瀏覽器完成重新導向後再查看");
+                java.io.InputStream body=status>=400?connection.getErrorStream():connection.getInputStream();
+                if(body==null)throw new IllegalStateException("HTTP "+status+"，沒有回應內容");
+                String charset="UTF-8";
+                String type=connection.getContentType();
+                if(type!=null && type.toLowerCase(java.util.Locale.US).contains("charset=")){
+                    String part=type.substring(type.toLowerCase(java.util.Locale.US).indexOf("charset=")+8);
+                    charset=part.split("[; ]",2)[0].replace("\"","").trim();
+                }
+                StringBuilder source=new StringBuilder();
+                try(java.io.BufferedReader reader=new java.io.BufferedReader(
+                        new java.io.InputStreamReader(body,java.nio.charset.Charset.forName(charset)))){
+                    char[] buffer=new char[8192];
+                    int n;
+                    while(source.length()<2000000 && (n=reader.read(buffer,0,Math.min(buffer.length,2000000-source.length())))!=-1)
+                        source.append(buffer,0,n);
+                }
+                final String output="HTTP "+status+"\n"+(type==null?"":type)+"\n\n"+source;
+                activity.runOnUiThread(()->showSourceText("伺服器原始 HTML",output));
+            }catch(Exception e){
+                final String message=e.getMessage();
+                activity.runOnUiThread(()->new AlertDialog.Builder(activity)
+                    .setTitle("讀取失敗").setMessage(message)
+                    .setPositiveButton("確定",null).show());
+            }finally{
+                if(connection!=null)connection.disconnect();
+            }
+        }).start();
     }
 
     private JSONObject defaults() {
