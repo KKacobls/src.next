@@ -129,7 +129,15 @@ jobs:
           apksigner="$(find "$ANDROID_HOME/build-tools" -maxdepth 2 -type f -name apksigner | sort -V | tail -1)"
           if [[ -z "$apksigner" ]]; then echo "::error::apksigner not installed"; exit 1; fi
           "$apksigner" verify --verbose --print-certs "$apk"
-          actual="$("$apksigner" verify --print-certs "$apk" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | head -1)"
+          # apksigner prints either "Signer #1 certificate ..." or "V2 Signer: certificate ...".
+          # Extract and de-duplicate every certificate digest across all verified signing schemes.
+          actual="$("$apksigner" verify --verbose --print-certs "$apk" \
+            | sed -nE 's/^.*certificate SHA-256 digest: ([[:xdigit:]]{64}).*$/\1/p' \
+            | tr '[:upper:]' '[:lower:]' | sort -u)"
+          if [[ -z "$actual" ]]; then
+            echo "::error::Unable to read APK signer certificate digest."
+            exit 1
+          fi
           expected="$(tr -d '\r\n ' < signing/jslite-release-cert-sha256.txt)"
           if [[ "$actual" != "$expected" ]]; then
             echo "::error::Published APK certificate does not match the pinned stable certificate."
