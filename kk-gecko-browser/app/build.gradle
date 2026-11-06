@@ -1,0 +1,50 @@
+plugins { id 'com.android.application' }
+
+android {
+    namespace 'com.kk.geckomonkey'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'com.kk.kkmonkey'
+        minSdk 26
+        targetSdk 35
+        versionCode 1
+        versionName '0.1.0'
+    }
+
+    def signingPath = System.getenv('KK_GECKO_STORE_FILE')
+    def signingPassword = System.getenv('KK_GECKO_STORE_PASSWORD')
+    signingConfigs {
+        stable {
+            if (signingPath && signingPassword) {
+                storeFile file(signingPath)
+                storePassword signingPassword
+                keyAlias 'jslite-browser'
+                keyPassword signingPassword
+                storeType 'pkcs12'
+                enableV1Signing true
+                enableV2Signing true
+            }
+        }
+    }
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.stable
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    // Mozilla Gecko is a full browser engine and carries native libraries.
+    packaging {
+        jniLibs {
+            useLegacyPackaging true
+        }
+    }
+}
+
+dependencies {
+    implementation 'org.mozilla.geckoview:geckoview:158.0.20261021001945'
+}
