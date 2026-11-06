@@ -1,6 +1,6 @@
 <resources>
-    <string name="app_name">JS 極簡瀏覽器</string>
-    <string name="home_title">JS 極簡瀏覽器</string>
+    <string name="app_name">KK瀏覽器</string>
+    <string name="home_title">KK瀏覽器</string>
     <string name="home_hint">點擊輸入網址</string>
     <string name="home_main">簡單瀏覽，自由執行。</string>
     <string name="home_subtitle">輸入網址或搜尋，也可以在目前網頁執行 JavaScript。</string>
