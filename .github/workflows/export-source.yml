@@ -1,0 +1,66 @@
+name: Export JS Lite Browser source for development
+on:
+  push:
+    branches: [js-lite-browser-build]
+    paths:
+      - '.github/workflows/export-source.yml'
+permissions:
+  contents: write
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore Android source
+        run: |
+          base64 -d assets/js-lite-browser-src.tar.xz.b64 > /tmp/js-lite-browser-src.tar.xz
+          echo "6f4886e65693450b97b84bc941eb0ab33bfd3bad358e84458dc2d162f9a891c5  /tmp/js-lite-browser-src.tar.xz" | sha256sum -c -
+          mkdir -p js-lite-browser
+          tar -xJf /tmp/js-lite-browser-src.tar.xz -C js-lite-browser
+      - name: Apply v1.1 upgrade
+        run: |
+          base64 -d assets/js-lite-v11.patch.xz.b64 > /tmp/js-lite-v11.patch.xz
+          echo "e413652b608c34cdcf5c003e3c49a5bc785528c0ac9929737db913b7f6edc400  /tmp/js-lite-v11.patch.xz" | sha256sum -c -
+          xz -dc /tmp/js-lite-v11.patch.xz | sed '/^--- a\/README.md$/,$d' > /tmp/js-lite-v11.patch
+          (cd js-lite-browser && patch --batch -p1 < /tmp/js-lite-v11.patch)
+      - name: Apply v1.1.4 address editor and Traditional Chinese default
+        run: (cd js-lite-browser && patch --batch -p1 < ../assets/js-lite-v111.patch)
+      - name: Apply v1.1.4 overflow menu and native dialog styling
+        run: |
+          base64 -d assets/js-lite-v112.patch.xz.b64 > /tmp/js-lite-v112.patch.xz
+          echo "56ae7bd50714324e44f18a4e17f5ab2e7022f6dee37f309570c136e0429aeb79  /tmp/js-lite-v112.patch.xz" | sha256sum -c -
+          (cd js-lite-browser && xz -dc /tmp/js-lite-v112.patch.xz | patch --batch -p1)
+      - name: Apply v1.1.4 Traditional Chinese localization fix
+        run: |
+          base64 -d assets/js-lite-v113.patch.xz.b64 > /tmp/js-lite-v113.patch.xz
+          echo "e3c94b39d5a5b82d1ba496facfdf65d94e5dc352b687f0b54f2549f4703c0ff4  /tmp/js-lite-v113.patch.xz" | sha256sum -c -
+          (cd js-lite-browser && xz -dc /tmp/js-lite-v113.patch.xz | patch --batch -p1)
+          python3 - <<'PY'
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+          r=Path("js-lite-browser/app/src/main/res")
+          def t(p): return {n.attrib["name"]:n.text for n in ET.parse(r/p).getroot() if n.tag=="string"}
+          zh=t("values/strings.xml")
+          en=t("values-en/strings.xml")
+          assert set(zh)==set(en), "Missing translation keys"
+          assert zh["cancel"]=="取消" and zh["confirm"]=="確定"
+          assert zh["open_url"]=="輸入網址／搜尋" and en["open_url"]=="Enter URL / search"
+          assert zh["auto_scripts"]=="自動 JS 腳本" and en["auto_scripts"]=="Auto JS scripts"
+          assert t("values-b+zh+Hant+TW/strings.xml")==zh
+          print("Localization resources verified")
+          PY
+      - name: Apply v1.1.4 rounded equal-width JavaScript dialogs
+        run: |
+          base64 -d assets/js-lite-v114.patch.xz.b64 > /tmp/js-lite-v114.patch.xz
+          echo "9665615d0929c39c93756efb63685dfaec6a58b9f692e1c6e17fb922fc351a0a  /tmp/js-lite-v114.patch.xz" | sha256sum -c -
+          (cd js-lite-browser && xz -dc /tmp/js-lite-v114.patch.xz | patch --batch -p1)
+      - name: Commit unpacked source for future maintenance
+        run: |
+          set -e
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add js-lite-browser
+          if ! git diff --cached --quiet; then
+            git commit -m "Extract JS Lite Browser v1.1.4 source for maintainability"
+            git push origin HEAD:js-lite-browser-build
+          fi
