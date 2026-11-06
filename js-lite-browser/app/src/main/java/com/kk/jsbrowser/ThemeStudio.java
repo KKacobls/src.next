@@ -189,9 +189,23 @@ final class ThemeStudio {
     }
     private void previewCustom(JSONObject candidate,int index,AlertDialog parent){
         new AlertDialog.Builder(activity).setTitle(candidate.optString("name","自訂風格"))
-            .setItems(new String[]{"預覽與套用","重新命名","刪除風格"},(d,which)->{
+            .setItems(new String[]{"預覽與套用","以目前設定覆寫","重新命名","刪除風格"},(d,which)->{
                 if(which==0)preview(candidate,index,parent);
                 else if(which==1){
+                    new AlertDialog.Builder(activity).setMessage("以目前正在使用的介面設定取代這個自訂風格？")
+                        .setPositiveButton("覆寫",(a,b)->{
+                            try{
+                                JSONArray all=customs();
+                                JSONObject updated=new JSONObject(prefs.getString("browser_theme_v120","{}"));
+                                updated.put("name",candidate.optString("name","自訂風格"));
+                                updated.put("preset",-1);
+                                all.put(index,updated);
+                                prefs.edit().putString(KEY,all.toString()).apply();
+                                parent.dismiss();showGallery(updated);
+                            }catch(Exception e){toast("無法覆寫");}
+                        }).setNegativeButton("取消",null).show();
+                }
+                else if(which==2){
                     EditText edit=new EditText(activity);edit.setText(candidate.optString("name"));
                     new AlertDialog.Builder(activity).setTitle("重新命名").setView(edit)
                         .setPositiveButton("儲存",(a,b)->{
