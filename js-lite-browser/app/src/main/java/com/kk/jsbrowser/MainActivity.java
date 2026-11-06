@@ -1166,6 +1166,16 @@ public class MainActivity extends Activity {
             label.setText("要使用 "+appName+" 開啟這個連結嗎？");
             label.setTextSize(18);
             details.addView(label);
+            if(resolved!=null){
+                try {
+                    android.widget.ImageView appIcon=new android.widget.ImageView(this);
+                    appIcon.setImageDrawable(resolved.loadIcon(getPackageManager()));
+                    LinearLayout.LayoutParams iconParams=new LinearLayout.LayoutParams(dp(54),dp(54));
+                    iconParams.topMargin=dp(8);
+                    iconParams.bottomMargin=dp(5);
+                    details.addView(appIcon,iconParams);
+                } catch(Exception ignored){}
+            }
             android.widget.CheckBox remember=new android.widget.CheckBox(this);
             remember.setText("記住此 App 的開啟選擇");
             TextView info=new TextView(this);
