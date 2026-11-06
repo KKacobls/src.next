@@ -76,7 +76,10 @@ public class MainActivity extends Activity {
     private BrowserExtras extras;
     private DownloadPage downloads;
     private View sidebarOverlay;
-    private float edgeTouchStartX, edgeTouchStartY;
+    private FrameLayout browserFrame;
+    private LinearLayout findBar;
+    private EditText findInput;
+    private TextView findCount;
     private TextView pageTitle;
     private TextView pageHost;
     private LinearLayout headerInfo;
@@ -198,6 +201,7 @@ public class MainActivity extends Activity {
         root.addView(loading, new LinearLayout.LayoutParams(-1, dp(2)));
 
         FrameLayout frame = new FrameLayout(this);
+        browserFrame = frame;
         root.addView(frame, new LinearLayout.LayoutParams(-1, 0, 1));
         webView = new WebView(this);
         frame.addView(webView, new FrameLayout.LayoutParams(-1, -1));
@@ -232,7 +236,6 @@ public class MainActivity extends Activity {
         extras.applyDesktop();
         downloads = new DownloadPage(this);
         applyCustomTheme();
-        setupDeveloperSwipe(frame);
 
         if (savedInstanceState != null) {
             webView.restoreState(savedInstanceState);
@@ -244,7 +247,6 @@ public class MainActivity extends Activity {
             if (!configured.isEmpty()) navigate(configured);
             else showHome();
         }
-        askDefaultBrowserOnce();
     }
 
     private View buildHome() {
@@ -344,9 +346,7 @@ public class MainActivity extends Activity {
                 return true;
             }
             @Override public boolean onShowFileChooser(WebView view, ValueCallback<Uri[]> callback, FileChooserParams params) {
-                if (extras != null) extras.rememberClosed();
-        closeSidebar();
-        if (filePickerCallback != null) filePickerCallback.onReceiveValue(null);
+                if (filePickerCallback != null) filePickerCallback.onReceiveValue(null);
                 filePickerCallback = callback;
                 try {
                     startActivityForResult(params.createIntent(), PICK_FILE);
@@ -497,11 +497,19 @@ public class MainActivity extends Activity {
         panel.setPadding(dp(12), dp(12), dp(12), dp(8));
         panel.setBackground(rounded(extras.color("dialogBackgroundColor",Color.WHITE),19));
 
-        String[][] actions = {
-            {"⌕","網址"}, {"↻","重新整理"}, {"‹","返回"},
-            {"⌂","首頁"}, {"↗","分享"}, {"◷","紀錄"},
-            {"−","縮小"}, {"+","放大"},
-            {"▣", getSharedPreferences(PREFS,MODE_PRIVATE).getBoolean("desktop_v120",false) ? "手機" : "電腦"}
+        // Nine icon-only shortcuts; accessible names remain as content descriptions.
+        String[] titles = {
+            "輸入網址", "重新整理", "返回",
+            "首頁", "分享", "瀏覽紀錄",
+            "縮小", "放大",
+            getSharedPreferences(PREFS,MODE_PRIVATE).getBoolean("desktop_v120",false) ? "手機版" : "電腦版"
+        };
+        int[] icons = {
+            R.drawable.shortcut_search, R.drawable.shortcut_refresh, R.drawable.shortcut_back,
+            R.drawable.shortcut_home, R.drawable.shortcut_share, R.drawable.shortcut_history,
+            R.drawable.shortcut_zoom_out, R.drawable.shortcut_zoom_in,
+            getSharedPreferences(PREFS,MODE_PRIVATE).getBoolean("desktop_v120",false)
+                ? R.drawable.shortcut_mobile : R.drawable.shortcut_desktop
         };
         Runnable[] commands = {
             this::showUrlDialog, () -> webView.reload(),
@@ -512,22 +520,22 @@ public class MainActivity extends Activity {
         for(int row=0;row<3;row++) {
             LinearLayout gridRow = new LinearLayout(this);
             gridRow.setOrientation(LinearLayout.HORIZONTAL);
-            panel.addView(gridRow,new LinearLayout.LayoutParams(-1,dp(73)));
+            LinearLayout.LayoutParams gridRowParams=new LinearLayout.LayoutParams(-1,dp(63));
+            gridRowParams.bottomMargin=dp(5);
+            panel.addView(gridRow,gridRowParams);
             for(int col=0;col<3;col++) {
                 int idx=row*3+col;
-                addGridShortcut(gridRow,actions[idx][0],actions[idx][1],commands[idx]);
+                addGridShortcut(gridRow,icons[idx],titles[idx],commands[idx]);
             }
         }
         addMenuDivider(panel);
         addMenuItemLabel(panel,"↶","重新開啟最近關閉頁面",()->{
             extras.reopenClosed();homeView.setVisibility(View.GONE);
         });
-        addMenuItemLabel(panel,"⌕","在網頁中搜尋",extras::searchInPage);
+        addMenuItemLabel(panel,"⌕","在網頁中搜尋",this::showFindBar);
         addMenuItemLabel(panel,"↓","下載紀錄",downloads::show);
-        addMenuItemLabel(panel,"⚑","設定預設瀏覽器",this::requestDefaultBrowser);
         addMenuItemLabel(panel,"{}","JSON 設定匯入／匯出",extras::jsonSettings);
         addMenuItemLabel(panel,"文","語言設定",this::chooseLanguage);
-        addMenuItem(panel,"⚙",R.string.app_permissions,this::openAppPermissions);
         if (extras.developerEnabled()) {
             addMenuDivider(panel);
             addMenuItemLabel(panel,"⌘","開發者工具",this::showDeveloperTools);
@@ -566,25 +574,23 @@ public class MainActivity extends Activity {
         popup.showAtLocation(anchor, Gravity.TOP | Gravity.RIGHT, dp(10), top);
     }
 
-    private void addGridShortcut(LinearLayout parent,String glyph,String title,Runnable command) {
-        LinearLayout cell=new LinearLayout(this);
-        cell.setOrientation(LinearLayout.VERTICAL);
-        cell.setGravity(Gravity.CENTER);
+    private void addGridShortcut(LinearLayout parent,int iconResource,String title,Runnable command) {
+        FrameLayout cell=new FrameLayout(this);
         cell.setContentDescription(title);
-        cell.setBackground(rounded(extras.color("buttonColor",Color.rgb(243,243,243)),8));
-        parent.addView(cell,new LinearLayout.LayoutParams(0,-1,1));
-        TextView symbol=new TextView(this);
-        symbol.setText(glyph);
-        symbol.setTextColor(extras.color("accentColor",Color.rgb(28,32,32)));
-        symbol.setTextSize(TypedValue.COMPLEX_UNIT_SP,25);
-        symbol.setGravity(Gravity.CENTER);
-        cell.addView(symbol,new LinearLayout.LayoutParams(-1,dp(40)));
-        TextView text=new TextView(this);
-        text.setText(title);
-        text.setTextSize(TypedValue.COMPLEX_UNIT_SP,11);
-        text.setTextColor(extras.color("buttonTextColor",Color.rgb(75,76,76)));
-        text.setGravity(Gravity.CENTER);
-        cell.addView(text);
+        cell.setFocusable(true);
+        cell.setClickable(true);
+        cell.setBackground(rounded(extras.color("buttonColor",Color.rgb(243,243,243)),10));
+        LinearLayout.LayoutParams space=new LinearLayout.LayoutParams(0,-1,1);
+        space.setMargins(dp(3),dp(2),dp(3),dp(2));
+        parent.addView(cell,space);
+
+        android.widget.ImageView icon=new android.widget.ImageView(this);
+        icon.setImageResource(iconResource);
+        icon.setImageTintList(android.content.res.ColorStateList.valueOf(
+            extras.color("buttonTextColor",Color.rgb(40,41,40))));
+        icon.setScaleType(android.widget.ImageView.ScaleType.FIT_CENTER);
+        FrameLayout.LayoutParams centered=new FrameLayout.LayoutParams(dp(28),dp(28),Gravity.CENTER);
+        cell.addView(icon,centered);
         cell.setOnClickListener(v->{dismissOverflow();command.run();});
     }
 
@@ -663,8 +669,9 @@ public class MainActivity extends Activity {
 
     private void showDeveloperTools() {
         if(!extras.developerEnabled()) return;
-        String toggle = extras.sidebarEnabled() ? "停用右側快捷欄" : "啟用右側快捷欄";
-        String[] options={"JS 主控台","自動 JS 腳本","檢視網頁原始碼","CSS／介面屬性","介面風格","工具列位置",toggle,"JSON 設定"};
+        String toggle = sidebarOverlay==null ? "開啟 JS 側邊工具" : "關閉 JS 側邊工具";
+        String[] options={"JS 主控台","自動 JS 腳本","檢視網頁原始碼","CSS／介面屬性",
+            "介面風格","工具列位置",toggle,"JSON 設定"};
         new AlertDialog.Builder(this).setTitle("開發者工具")
             .setItems(options,(d,which)->{
                 switch(which){
@@ -674,72 +681,229 @@ public class MainActivity extends Activity {
                     case 3: extras.editStyle();break;
                     case 4: extras.choosePreset();break;
                     case 5: extras.chooseToolbarPosition();break;
-                    case 6: extras.toggleSidebar();break;
+                    case 6: if(sidebarOverlay==null)openSidebar();else closeSidebar();break;
                     case 7: extras.jsonSettings();break;
                 }
             }).setNegativeButton("關閉",null).show();
     }
 
-    @SuppressLint("ClickableViewAccessibility")
-    private void setupDeveloperSwipe(FrameLayout frame) {
-        View edge=new View(this);
-        FrameLayout.LayoutParams edgeParams=new FrameLayout.LayoutParams(dp(16),-1,Gravity.RIGHT);
-        frame.addView(edge,edgeParams);
-        edge.setOnTouchListener((v,event)->{
-            if(extras==null || !extras.sidebarEnabled())return false;
-            if(event.getActionMasked()==android.view.MotionEvent.ACTION_DOWN){
-                edgeTouchStartX=event.getRawX();edgeTouchStartY=event.getRawY();return true;
+    /** Docked on the right, WITHOUT a modal/dim overlay: the remaining webpage is touchable. */
+    private void openSidebar() {
+        if(extras==null || !extras.developerEnabled() || sidebarOverlay!=null || browserFrame==null)return;
+        LinearLayout panel=new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setBackground(rounded(Color.rgb(249,250,251),15));
+        panel.setElevation(dp(14));
+        panel.setPadding(dp(10),dp(12),dp(10),dp(10));
+        int maxWidth=Math.min(dp(330),getResources().getDisplayMetrics().widthPixels-dp(80));
+        int width=Math.max(dp(212),maxWidth);
+        FrameLayout.LayoutParams placement=new FrameLayout.LayoutParams(width,-1,Gravity.END);
+        browserFrame.addView(panel,placement);
+        sidebarOverlay=panel;
+
+        LinearLayout header=new LinearLayout(this);
+        header.setOrientation(LinearLayout.HORIZONTAL);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        panel.addView(header,new LinearLayout.LayoutParams(-1,dp(44)));
+
+        TextView title=new TextView(this);
+        title.setText("JS 快捷工具");
+        title.setTextColor(Color.rgb(24,32,43));
+        title.setTextSize(TypedValue.COMPLEX_UNIT_SP,17);
+        title.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
+        header.addView(title,new LinearLayout.LayoutParams(0,-2,1));
+
+        TextView close=new TextView(this);
+        close.setText("×");close.setTextSize(TypedValue.COMPLEX_UNIT_SP,29);
+        close.setTextColor(Color.rgb(55,65,81));
+        close.setGravity(Gravity.CENTER);
+        close.setContentDescription("關閉 JS 側邊工具");
+        header.addView(close,new LinearLayout.LayoutParams(dp(42),-1));
+        close.setOnClickListener(v->closeSidebar());
+
+        TextView hint=new TextView(this);
+        hint.setText("編寫 JavaScript，按執行就會在目前網頁執行");
+        hint.setTextSize(TypedValue.COMPLEX_UNIT_SP,11);
+        hint.setTextColor(Color.rgb(100,110,121));
+        panel.addView(hint);
+
+        EditText editor=new EditText(this);
+        editor.setHint("document.title");
+        editor.setHintTextColor(Color.rgb(142,155,168));
+        editor.setTextColor(Color.rgb(232,242,250));
+        editor.setTextSize(TypedValue.COMPLEX_UNIT_SP,13);
+        editor.setTypeface(Typeface.MONOSPACE);
+        editor.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE
+            | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
+        editor.setMinLines(5);editor.setMaxLines(12);
+        editor.setGravity(Gravity.TOP|Gravity.START);
+        editor.setBackground(rounded(Color.rgb(23,35,50),10));
+        editor.setPadding(dp(10),dp(10),dp(10),dp(10));
+        editor.setText(getSharedPreferences(PREFS,MODE_PRIVATE)
+            .getString("quick_js_last_code_v132",""));
+        LinearLayout.LayoutParams editorParams=new LinearLayout.LayoutParams(-1,-2);
+        editorParams.topMargin=dp(9);
+        panel.addView(editor,editorParams);
+
+        LinearLayout buttons=new LinearLayout(this);
+        buttons.setOrientation(LinearLayout.HORIZONTAL);
+        LinearLayout.LayoutParams buttonParams=new LinearLayout.LayoutParams(-1,dp(44));
+        buttonParams.topMargin=dp(7);
+        panel.addView(buttons,buttonParams);
+
+        Button execute=button("▶ 執行 JS",true);
+        Button clear=button("清空",false);
+        buttons.addView(execute,new LinearLayout.LayoutParams(0,-1,1.6f));
+        LinearLayout.LayoutParams clearParams=new LinearLayout.LayoutParams(0,-1,1);
+        clearParams.leftMargin=dp(6);
+        buttons.addView(clear,clearParams);
+        clear.setOnClickListener(v->editor.setText(""));
+
+        TextView status=new TextView(this);
+        status.setText("執行結果會顯示在這裡");
+        status.setTextSize(TypedValue.COMPLEX_UNIT_SP,12);
+        status.setTextColor(Color.rgb(45,56,71));
+        status.setTextIsSelectable(true);
+        status.setPadding(dp(7),dp(9),dp(7),dp(7));
+        panel.addView(status,new LinearLayout.LayoutParams(-1,-2));
+
+        execute.setOnClickListener(v->{
+            String code=editor.getText().toString();
+            if(code.trim().isEmpty()){status.setText("請先輸入 JavaScript");return;}
+            String url=webView.getUrl();
+            if(url==null || !(url.startsWith("https://")||url.startsWith("http://"))){
+                status.setText("請先開啟網頁");return;
             }
-            if(event.getActionMasked()==android.view.MotionEvent.ACTION_UP){
-                if(edgeTouchStartX-event.getRawX()>dp(65) && Math.abs(edgeTouchStartY-event.getRawY())<dp(160)){
-                    openSidebar();return true;
-                }
-            }
-            return true;
+            getSharedPreferences(PREFS,MODE_PRIVATE).edit()
+                .putString("quick_js_last_code_v132",code).apply();
+            if(code.regionMatches(true,0,"javascript:",0,11))code=code.substring(11);
+            appendLog("> [快捷 JS] "+code);
+            status.setText("執行中…");
+            webView.evaluateJavascript(code,result->{
+                if(sidebarOverlay!=panel)return;
+                status.setText("結果： "+(result==null?"(無)":result));
+                if(result!=null)appendLog("< "+result);
+            });
         });
+
+        View spacer=new View(this);
+        panel.addView(spacer,new LinearLayout.LayoutParams(1,0,1));
+
+        Button console=button("查看 Console",false);
+        Button scripts=button("自動 JS 腳本",false);
+        Button source=button("檢視原始碼",false);
+        panel.addView(console,new LinearLayout.LayoutParams(-1,dp(44)));
+        LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,dp(44));p.topMargin=dp(5);
+        panel.addView(scripts,p);
+        LinearLayout.LayoutParams p2=new LinearLayout.LayoutParams(-1,dp(44));p2.topMargin=dp(5);
+        panel.addView(source,p2);
+        console.setOnClickListener(v->showConsole());
+        scripts.setOnClickListener(v->autoScripts.showManager());
+        source.setOnClickListener(v->extras.viewSource());
     }
 
-    private void openSidebar() {
-        if(extras==null || !extras.sidebarEnabled() || sidebarOverlay!=null)return;
-        FrameLayout overlay=new FrameLayout(this);
-        overlay.setBackgroundColor(0x55000000);
-        sidebarOverlay=overlay;
-        addContentView(overlay,new ViewGroup.LayoutParams(-1,-1));
-        overlay.setOnClickListener(v->closeSidebar());
-        LinearLayout drawer=new LinearLayout(this);
-        drawer.setOrientation(LinearLayout.VERTICAL);
-        drawer.setPadding(dp(14),dp(28),dp(14),dp(12));
-        drawer.setBackground(rounded(Color.WHITE,18));
-        FrameLayout.LayoutParams placement=new FrameLayout.LayoutParams(
-            Math.min(dp(294),(int)(getResources().getDisplayMetrics().widthPixels*.82f)),-1,Gravity.RIGHT);
-        overlay.addView(drawer,placement);
-        drawer.setOnClickListener(v->{});
-        TextView title=new TextView(this);
-        title.setText("開發者快捷工具");
-        title.setTextSize(20);title.setTypeface(null,Typeface.BOLD);title.setPadding(dp(8),0,0,dp(15));
-        drawer.addView(title);
-        String[] labels={"JS 主控台","自動 JS 腳本","View Source","CSS 樣式","介面風格","JSON 設定"};
-        Runnable[] actions={this::showConsole,autoScripts::showManager,extras::viewSource,
-            extras::editStyle,extras::choosePreset,extras::jsonSettings};
-        for(int i=0;i<labels.length;i++){
-            final int index=i;
-            Button button=new Button(this);
-            button.setAllCaps(false);button.setText(labels[i]);
-            drawer.addView(button,new LinearLayout.LayoutParams(-1,dp(53)));
-            button.setOnClickListener(v->{closeSidebar();actions[index].run();});
-        }
-        drawer.setTranslationX(dp(300));
-        drawer.animate().translationX(0).setDuration(185).start();
-    }
-    private void closeSidebar(){
+    private void closeSidebar() {
         if(sidebarOverlay==null)return;
-        View view=sidebarOverlay;sidebarOverlay=null;
-        if(view.getParent() instanceof ViewGroup)((ViewGroup)view.getParent()).removeView(view);
+        View panel=sidebarOverlay;
+        sidebarOverlay=null;
+        if(panel.getParent() instanceof ViewGroup)((ViewGroup)panel.getParent()).removeView(panel);
+    }
+
+    /** Chrome Ctrl+F-style inline find bar: no blocking AlertDialog, webpage remains interactive. */
+    private void showFindBar() {
+        if(browserFrame==null||webView==null)return;
+        if(findBar!=null){
+            findInput.requestFocus();
+            showKeyboard(findInput);
+            return;
+        }
+        LinearLayout bar=new LinearLayout(this);
+        bar.setOrientation(LinearLayout.HORIZONTAL);
+        bar.setGravity(Gravity.CENTER_VERTICAL);
+        bar.setPadding(dp(7),dp(3),dp(4),dp(3));
+        bar.setBackground(rounded(Color.rgb(248,249,251),11));
+        bar.setElevation(dp(8));
+        FrameLayout.LayoutParams position=new FrameLayout.LayoutParams(-1,dp(54),Gravity.TOP);
+        position.setMargins(dp(7),dp(5),dp(7),0);
+        browserFrame.addView(bar,position);
+        findBar=bar;
+
+        EditText search=new EditText(this);
+        findInput=search;
+        search.setSingleLine(true);
+        search.setTextSize(TypedValue.COMPLEX_UNIT_SP,14);
+        search.setHint("搜尋此網頁");
+        search.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH);
+        bar.addView(search,new LinearLayout.LayoutParams(0,-1,1));
+
+        TextView counter=new TextView(this);
+        findCount=counter;
+        counter.setText("0/0");
+        counter.setTextSize(TypedValue.COMPLEX_UNIT_SP,12);
+        counter.setGravity(Gravity.CENTER);
+        bar.addView(counter,new LinearLayout.LayoutParams(dp(48),-1));
+
+        TextView previous=findActionButton("‹","上一個");
+        TextView next=findActionButton("›","下一個");
+        TextView close=findActionButton("×","關閉搜尋");
+        bar.addView(previous,new LinearLayout.LayoutParams(dp(38),-1));
+        bar.addView(next,new LinearLayout.LayoutParams(dp(38),-1));
+        bar.addView(close,new LinearLayout.LayoutParams(dp(38),-1));
+        previous.setOnClickListener(v->webView.findNext(false));
+        next.setOnClickListener(v->webView.findNext(true));
+        close.setOnClickListener(v->closeFindBar());
+        search.setOnEditorActionListener((v,actionId,event)->{
+            webView.findNext(true);return true;
+        });
+        webView.setFindListener((index,total,finished)->{
+            if(findBar!=bar)return;
+            counter.setText(total==0?"0/0":(index+1)+"/"+total);
+        });
+        search.addTextChangedListener(new android.text.TextWatcher(){
+            public void beforeTextChanged(CharSequence s,int st,int count,int after){}
+            public void onTextChanged(CharSequence s,int start,int before,int count){
+                if(s.length()==0){webView.clearMatches();counter.setText("0/0");}
+                else webView.findAllAsync(s.toString());
+            }
+            public void afterTextChanged(android.text.Editable e){}
+        });
+        search.requestFocus();
+        search.post(()->showKeyboard(search));
+    }
+
+    private TextView findActionButton(String symbol,String description){
+        TextView view=new TextView(this);
+        view.setText(symbol);view.setTextSize(TypedValue.COMPLEX_UNIT_SP,25);
+        view.setTextColor(Color.rgb(54,65,80));
+        view.setGravity(Gravity.CENTER);
+        view.setContentDescription(description);
+        view.setFocusable(true);
+        return view;
+    }
+
+    private void showKeyboard(EditText edit){
+        android.view.inputmethod.InputMethodManager imm=(android.view.inputmethod.InputMethodManager)
+            getSystemService(INPUT_METHOD_SERVICE);
+        if(imm!=null)imm.showSoftInput(edit,android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT);
+    }
+
+    private void closeFindBar() {
+        if(findBar==null)return;
+        View bar=findBar;
+        findBar=null;findInput=null;findCount=null;
+        webView.clearMatches();
+        webView.setFindListener(null);
+        if(bar.getParent() instanceof ViewGroup)((ViewGroup)bar.getParent()).removeView(bar);
+        android.view.inputmethod.InputMethodManager imm=(android.view.inputmethod.InputMethodManager)
+            getSystemService(INPUT_METHOD_SERVICE);
+        if(imm!=null)imm.hideSoftInputFromWindow(bar.getWindowToken(),0);
+        webView.requestFocus();
     }
 
     private void applyCustomTheme() {
         if(extras==null || browserRoot==null || browserBar==null || pageTitle==null) return;
         extras.applyTheme(browserRoot,pageTitle,pageHost,browserBar,overflowButton);
+        if(!extras.developerEnabled())closeSidebar();
         applyHeaderStyle();
     }
 
@@ -765,15 +929,6 @@ public class MainActivity extends Activity {
         share.setType("text/plain");
         share.putExtra(Intent.EXTRA_TEXT, url);
         startActivity(Intent.createChooser(share, getString(R.string.share)));
-    }
-
-    private void openAppPermissions() {
-        Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                Uri.parse("package:" + getPackageName()));
-        try { startActivity(intent); }
-        catch (Exception ignored) {
-            Toast.makeText(this, R.string.unsupported_link, Toast.LENGTH_SHORT).show();
-        }
     }
 
     private void styleDialogButtons(AlertDialog dialog) {
@@ -1247,33 +1402,6 @@ public class MainActivity extends Activity {
         }
     }
 
-    private void requestDefaultBrowser(){
-        try{
-            if(android.os.Build.VERSION.SDK_INT>=29){
-                android.app.role.RoleManager role=(android.app.role.RoleManager)getSystemService(ROLE_SERVICE);
-                if(role!=null && role.isRoleAvailable(android.app.role.RoleManager.ROLE_BROWSER)){
-                    if(role.isRoleHeld(android.app.role.RoleManager.ROLE_BROWSER)){
-                        Toast.makeText(this,"已設定為預設瀏覽器",Toast.LENGTH_SHORT).show();
-                        return;
-                    }
-                    startActivityForResult(role.createRequestRoleIntent(android.app.role.RoleManager.ROLE_BROWSER),54);
-                    return;
-                }
-            }
-            startActivity(new Intent("android.settings.MANAGE_DEFAULT_APPS_SETTINGS"));
-        }catch(Exception e){openAppPermissions();}
-    }
-
-    private void askDefaultBrowserOnce(){
-        SharedPreferences p=getSharedPreferences(PREFS,MODE_PRIVATE);
-        if(p.getBoolean("default_browser_asked_v130",false))return;
-        p.edit().putBoolean("default_browser_asked_v130",true).apply();
-        new AlertDialog.Builder(this).setTitle("預設瀏覽器")
-            .setMessage("要將 JS Lite Browser 設為預設瀏覽器嗎？")
-            .setPositiveButton("設定", (d,w)->requestDefaultBrowser())
-            .setNegativeButton("稍後",null).show();
-    }
-
     @Override
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
@@ -1284,6 +1412,7 @@ public class MainActivity extends Activity {
     @Override
     public void onBackPressed() {
         if (sidebarOverlay != null) closeSidebar();
+        else if (findBar != null) closeFindBar();
         else if (consoleDialog != null && consoleDialog.isShowing()) consoleDialog.dismiss();
         else if (overflowPopup != null && overflowPopup.isShowing()) overflowPopup.dismiss();
         else if (webView != null && webView.canGoBack()) webView.goBack();
@@ -1298,6 +1427,8 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        closeFindBar();
+        closeSidebar();
         if (filePickerCallback != null) filePickerCallback.onReceiveValue(null);
         if (mediaRequest != null) mediaRequest.deny();
         if (consoleDialog != null) consoleDialog.dismiss();
