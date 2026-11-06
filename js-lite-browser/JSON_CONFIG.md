@@ -1,4 +1,34 @@
-# JS Lite Browser v1.3.2 — JSON 設定檔規範
+# KK瀏覽器 v1.3.3 — 懶人模式／JSON 設定規範
+
+## 懶人模式：只填 url 和 js 就能自動執行
+
+主選單「⋯ → 懶人模式（JSON 匯入／匯出）」提供直接貼上 JSON 並套用的入口。**介面內不會預先塞範例，也沒有模板提示**。例如：
+
+```json
+{
+  "url": "https://example.com/",
+  "name": "進站自動加上藍色邊框",
+  "js": "document.body.style.border = '8px solid #2563eb'; console.log('KK瀏覽器：自動 JS 已執行');",
+  "enabled": true,
+  "persist": true
+}
+```
+
+匯入後會自動完成以下動作：依 `url` 取得網域 `example.com` → 自動轉為 `*://example.com/*` 匹配規則 → 建立或更新指定名稱的 JS 腳本 → 啟用開發者模式與自動 JS 功能 → 開啟網址。**網站載入完成時**自動執行 `js`。刷新網頁或下次再次造訪同一網域也會自動執行（若 `persist: true`）。不會在不相關網域執行。
+
+欄位：
+- `url`：完整 HTTP(S) 網址，匯入後會立即開啟，且作為下次啟動網址。
+- `js` 或 `code`：任意 JavaScript 程式碼字串。
+- `name`：腳本名稱；同名匯入會更新原腳本，預設「懶人模式腳本」。
+- `match`：可省略；省略時會從 `url` 推導匹配網域；若要限制路徑可填 `https://example.com/specific/*`。
+- `enabled`：`true` 會自動執行，`false` 僅建立腳本。
+- `persist`：`true` 永久儲存，`false` 僅本次 App 程序有效。
+
+`persist` **不是**自動執行開關。腳本只有在 `enabled: true` 且自動 JS 總開關啟用、網址符合時才會執行。
+
+完整格式 `browser.startUrl` 與 `developer.scripts` 也支援；懶人模式同樣支援頂層 `scripts` 陣列，並與完整格式合併。JSON 完全由使用者手動貼上，App 不從網際網路自動下載腳本。
+
+完整範例檔：[examples/lazy-auto-js.json](examples/lazy-auto-js.json)。
 
 ## 基本格式
 
