@@ -238,6 +238,9 @@ public final class BrowserExtras {
             j.put("borderRadius",18);j.put("spacing",8);j.put("borderWidth",0);
             j.put("shadow",8);j.put("toolbarHeight",62);j.put("iconSize",25);
             j.put("toolbarPosition","top");j.put("headerAlignment","left");
+            j.put("buttonColor","#F3F3F3");j.put("buttonTextColor","#333333");
+            j.put("accentColor","#1764CF");j.put("borderColor","#D5D5D5");
+            j.put("dialogBackgroundColor","#FFFFFF");
         } catch(Exception ignored) {}
         return j;
     }
@@ -268,7 +271,7 @@ public final class BrowserExtras {
         headerBg.setColor(toolbar);
         headerBg.setCornerRadius(dp(Math.max(0,Math.min(80,s.optInt("borderRadius",18)))));
         int border=Math.max(0,Math.min(12,s.optInt("borderWidth",0)));
-        if(border>0)headerBg.setStroke(dp(border),foreground);
+        if(border>0)headerBg.setStroke(dp(border),color("borderColor",foreground));
         header.setBackground(headerBg);
         header.setElevation(dp(Math.max(0,Math.min(35,s.optInt("shadow",8)))));
         int spacing=Math.max(0,Math.min(35,s.optInt("spacing",8)));
@@ -306,11 +309,11 @@ public final class BrowserExtras {
             }).setNegativeButton("完成",null).show();
     }
     private static final String[] PROPERTY_NAMES = {
-        "背景顏色","文字顏色","工具列顏色","字體大小","字重","行高","圓角",
+        "背景顏色","文字顏色","工具列顏色","按鈕背景","按鈕文字","強調色","邊框顏色","對話框背景","字體大小","字重","行高","圓角",
         "間距","邊框寬度","陰影","工具列高度","圖示大小"
     };
     private static final String[] PROPERTY_KEYS = {
-        "backgroundColor","textColor","toolbarColor","fontSize","fontWeight","lineHeight",
+        "backgroundColor","textColor","toolbarColor","buttonColor","buttonTextColor","accentColor","borderColor","dialogBackgroundColor","fontSize","fontWeight","lineHeight",
         "borderRadius","spacing","borderWidth","shadow","toolbarHeight","iconSize"
     };
     void editStyle() {
@@ -323,7 +326,7 @@ public final class BrowserExtras {
             if(which==PROPERTY_NAMES.length+1) {chooseToolbarPosition();return;}
             JSONObject s=style();
             String key=PROPERTY_KEYS[which];
-            if (which < 3) {
+            if (which < 8) {
                 ThemeStudio studio=new ThemeStudio(activity,prefs,this::saveStyle);
                 int initial=color(key,Color.WHITE);
                 studio.pickColor(PROPERTY_NAMES[which],initial,
@@ -338,19 +341,33 @@ public final class BrowserExtras {
                          catch(Exception ignored){previewStyle=null;refreshTheme.run();}});
                 return;
             }
-            EditText value=new EditText(activity);
-            value.setSingleLine(true);
-            value.setText(s.optString(key));
-            new AlertDialog.Builder(activity).setTitle(PROPERTY_NAMES[which]).setView(value)
-                .setPositiveButton("儲存",(x,y)->{
-                    String raw=value.getText().toString().trim();
-                    try {
-                        if(which<3) {Color.parseColor(raw);s.put(key,raw);}
-                        else if(which==5) {double n=Double.parseDouble(raw);if(n<0.5||n>3)throw new IllegalArgumentException();s.put(key,n);}
-                        else {int n=Integer.parseInt(raw);if(n<0||n>1000)throw new IllegalArgumentException();s.put(key,n);}
-                        saveStyle(s);
-                    } catch(Exception e){toast("數值或色碼無效，未變更");}
-                }).setNegativeButton("取消",null).show();
+            double initial=s.optDouble(key,16);
+            double min=0,max=100,step=1;
+            if(key.equals("fontSize")){min=8;max=36;step=1;}
+            if(key.equals("fontWeight")){min=100;max=900;step=100;}
+            if(key.equals("lineHeight")){min=0.5;max=3;step=.05;}
+            if(key.equals("borderRadius")){min=0;max=80;step=1;}
+            if(key.equals("spacing")){min=0;max=40;step=1;}
+            if(key.equals("borderWidth")){min=0;max=12;step=1;}
+            if(key.equals("shadow")){min=0;max=35;step=1;}
+            if(key.equals("toolbarHeight")){min=42;max=100;step=1;}
+            if(key.equals("iconSize")){min=12;max=40;step=1;}
+            new ThemeStudio(activity,prefs,this::saveStyle)
+                .pickNumber(PROPERTY_NAMES[which],initial,min,max,step,
+                    n->{
+                        try{
+                            JSONObject stage=new JSONObject(s.toString());
+                            stage.put(key,n);
+                            previewStyle=stage;
+                            refreshTheme.run();
+                        }catch(Exception ignored){}
+                    },
+                    n->{
+                        try{
+                            s.put(key,n);
+                            saveStyle(s);
+                        }catch(Exception ignored){previewStyle=null;refreshTheme.run();}
+                    });
         }).setNegativeButton("關閉",null).show();
     }
     private JSONObject exportConfig() throws org.json.JSONException {
