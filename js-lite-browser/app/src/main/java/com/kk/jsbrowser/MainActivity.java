@@ -494,7 +494,7 @@ public class MainActivity extends Activity {
         LinearLayout panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
         panel.setPadding(dp(12), dp(12), dp(12), dp(8));
-        panel.setBackground(rounded(Color.WHITE, 19));
+        panel.setBackground(rounded(extras.color("dialogBackgroundColor",Color.WHITE),19));
 
         String[][] actions = {
             {"⌕","網址"}, {"↻","重新整理"}, {"‹","返回"},
@@ -545,7 +545,7 @@ public class MainActivity extends Activity {
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(false);
         scroll.setVerticalScrollBarEnabled(false);
-        scroll.setBackground(rounded(Color.WHITE, 19));
+        scroll.setBackground(rounded(extras.color("dialogBackgroundColor",Color.WHITE),19));
         scroll.addView(panel);
         int width = Math.min(dp(310), getResources().getDisplayMetrics().widthPixels - dp(24));
         int[] pos = new int[2];
@@ -554,7 +554,7 @@ public class MainActivity extends Activity {
         int available = getResources().getDisplayMetrics().heightPixels - top - dp(16);
         int height = Math.min(dp(690), Math.max(dp(225), available));
         PopupWindow popup = new PopupWindow(scroll, width, height, true);
-        popup.setBackgroundDrawable(rounded(Color.WHITE, 19));
+        popup.setBackgroundDrawable(rounded(extras.color("dialogBackgroundColor",Color.WHITE),19));
         popup.setElevation(dp(13));
         popup.setOutsideTouchable(true);
         popup.setClippingEnabled(true);
@@ -570,17 +570,18 @@ public class MainActivity extends Activity {
         cell.setOrientation(LinearLayout.VERTICAL);
         cell.setGravity(Gravity.CENTER);
         cell.setContentDescription(title);
+        cell.setBackground(rounded(extras.color("buttonColor",Color.rgb(243,243,243)),8));
         parent.addView(cell,new LinearLayout.LayoutParams(0,-1,1));
         TextView symbol=new TextView(this);
         symbol.setText(glyph);
-        symbol.setTextColor(Color.rgb(28,32,32));
+        symbol.setTextColor(extras.color("accentColor",Color.rgb(28,32,32)));
         symbol.setTextSize(TypedValue.COMPLEX_UNIT_SP,25);
         symbol.setGravity(Gravity.CENTER);
         cell.addView(symbol,new LinearLayout.LayoutParams(-1,dp(40)));
         TextView text=new TextView(this);
         text.setText(title);
         text.setTextSize(TypedValue.COMPLEX_UNIT_SP,11);
-        text.setTextColor(Color.rgb(75,76,76));
+        text.setTextColor(extras.color("buttonTextColor",Color.rgb(75,76,76)));
         text.setGravity(Gravity.CENTER);
         cell.addView(text);
         cell.setOnClickListener(v->{dismissOverflow();command.run();});
@@ -792,7 +793,7 @@ public class MainActivity extends Activity {
 
         LinearLayout body = new LinearLayout(this);
         body.setOrientation(LinearLayout.VERTICAL);
-        body.setBackground(rounded(Color.WHITE, 18));
+        body.setBackground(rounded(extras.color("dialogBackgroundColor",Color.WHITE),18));
         body.setClipToOutline(true);
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
@@ -804,7 +805,7 @@ public class MainActivity extends Activity {
         try { if (url != null) domain = Uri.parse(url).getHost(); }
         catch (Exception ignored) { }
         host.setText(domain == null ? getString(R.string.app_name) : domain);
-        host.setTextColor(Color.rgb(24, 24, 24));
+        host.setTextColor(extras.color("textColor",Color.rgb(24,24,24)));
         host.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
         host.setTypeface(Typeface.create("sans-serif-medium", Typeface.BOLD));
         host.setGravity(Gravity.CENTER);
@@ -812,7 +813,7 @@ public class MainActivity extends Activity {
 
         TextView text = new TextView(this);
         text.setText(message);
-        text.setTextColor(Color.rgb(121, 124, 123));
+        text.setTextColor(extras.color("textColor",Color.rgb(121,124,123)));
         text.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
         text.setGravity(Gravity.CENTER);
         text.setLineSpacing(dp(4), 1f);
@@ -1154,7 +1155,8 @@ public class MainActivity extends Activity {
             if(packageId==null)packageId="未知";
             String appName=resolved==null?"外部應用程式":String.valueOf(resolved.loadLabel(getPackageManager()));
             final String targetPackage=packageId;
-            final String rememberKey="external_approval_"+targetPackage;
+            String sourceHost=source==null?"":Uri.parse(source).getHost();
+            final String rememberKey="external_approval_"+targetPackage+"_"+(sourceHost==null?"":sourceHost);
             SharedPreferences p=getSharedPreferences(PREFS,MODE_PRIVATE);
             if(p.getBoolean(rememberKey,false)){
                 try{startActivity(external);return;}catch(Exception ignored){}
