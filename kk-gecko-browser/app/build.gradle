@@ -2,7 +2,7 @@ plugins { id 'com.android.application' }
 
 android {
     namespace 'com.kk.geckomonkey'
-    compileSdk 35
+    compileSdk 37
 
     defaultConfig {
         applicationId 'com.kk.kkmonkey'
