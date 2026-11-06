@@ -1,0 +1,1048 @@
+package com.kk.jsbrowser;
+
+import android.Manifest;
+import android.annotation.SuppressLint;
+import android.app.Activity;
+import android.app.AlertDialog;
+import android.app.Dialog;
+import android.app.DownloadManager;
+import android.content.ActivityNotFoundException;
+import android.content.Context;
+import android.content.Intent;
+import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
+import android.content.res.Configuration;
+import android.graphics.Color;
+import android.graphics.Insets;
+import android.graphics.Typeface;
+import android.graphics.drawable.ColorDrawable;
+import android.graphics.drawable.GradientDrawable;
+import android.net.Uri;
+import android.provider.Settings;
+import android.os.Build;
+import android.os.Bundle;
+import android.os.Environment;
+import android.text.InputType;
+import android.text.TextUtils;
+import android.util.TypedValue;
+import android.view.Gravity;
+import android.view.View;
+import android.view.ViewGroup;
+import android.view.Window;
+import android.view.WindowInsets;
+import android.view.WindowManager;
+import android.view.inputmethod.InputMethodManager;
+import android.webkit.ConsoleMessage;
+import android.webkit.CookieManager;
+import android.webkit.GeolocationPermissions;
+import android.webkit.JsResult;
+import android.webkit.PermissionRequest;
+import android.webkit.URLUtil;
+import android.webkit.ValueCallback;
+import android.webkit.WebChromeClient;
+import android.webkit.WebResourceError;
+import android.webkit.WebResourceRequest;
+import android.webkit.WebSettings;
+import android.webkit.WebStorage;
+import android.webkit.WebView;
+import android.webkit.WebViewClient;
+import android.widget.Button;
+import android.widget.EditText;
+import android.widget.FrameLayout;
+import android.widget.LinearLayout;
+import android.widget.PopupWindow;
+import android.widget.ProgressBar;
+import android.widget.ScrollView;
+import android.widget.TextView;
+import android.widget.Toast;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+
+/**
+ * Single-page Android WebView browser with manual JS console.
+ * No tabs or remote JS bridge. User-enabled scripts run only on matching pages.
+ */
+public class MainActivity extends Activity {
+    private static final int PICK_FILE = 41;
+    private static final int MEDIA_PERMISSIONS = 42;
+    private static final int LOCATION_PERMISSIONS = 43;
+    private static final String PREFS = "browser_settings";
+
+    private WebView webView;
+    private TextView pageTitle;
+    private TextView pageHost;
+    private LinearLayout headerInfo;
+    private PopupWindow overflowPopup;
+    private TextView overflowButton;
+    private AutoScriptManager autoScripts;
+    private View homeView;
+    private ProgressBar loading;
+    private Dialog consoleDialog;
+    private TextView consoleOutput;
+    private ScrollView consoleScroll;
+    private final StringBuilder consoleHistory = new StringBuilder();
+    private ValueCallback<Uri[]> filePickerCallback;
+    private PermissionRequest mediaRequest;
+    private GeolocationPermissions.Callback geolocationCallback;
+    private String geolocationOrigin;
+
+    @Override
+    protected void attachBaseContext(Context base) {
+        SharedPreferences prefs = base.getSharedPreferences(PREFS, MODE_PRIVATE);
+        // One-time repair for v1.0-v1.1.2 installs that kept an old system/English setting.
+        // After this migration users can choose English or follow-system normally.
+        if (!prefs.getBoolean("language_migrated_v113", false)) {
+            prefs.edit().putString("language", "zh-Hant-TW")
+                    .putBoolean("language_migrated_v113", true).commit();
+        }
+        String language = prefs.getString("language", "zh-Hant-TW");
+        if ("system".equals(language)) {
+            Locale.setDefault(base.getResources().getConfiguration().getLocales().get(0));
+        } else {
+            Locale locale = Locale.forLanguageTag(language);
+            Locale.setDefault(locale);
+            Configuration config = new Configuration(base.getResources().getConfiguration());
+            config.setLocale(locale);
+            config.setLayoutDirection(locale);
+            base = base.createConfigurationContext(config);
+        }
+        super.attachBaseContext(base);
+    }
+
+    @Override
+    @SuppressLint("SetJavaScriptEnabled")
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        getWindow().setStatusBarColor(Color.rgb(229, 230, 233));
+        getWindow().setNavigationBarColor(Color.WHITE);
+        getWindow().getDecorView().setSystemUiVisibility(
+                View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
+
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setBackgroundColor(Color.WHITE);
+        setContentView(root);
+        if (Build.VERSION.SDK_INT >= 35) {
+            getWindow().setStatusBarColor(Color.rgb(229, 230, 233));
+            getWindow().setNavigationBarColor(Color.TRANSPARENT);
+            root.setOnApplyWindowInsetsListener((v, insets) -> {
+                Insets safe = insets.getInsets(WindowInsets.Type.systemBars());
+                root.setPadding(safe.left, safe.top, safe.right, safe.bottom);
+                return insets;
+            });
+        }
+
+        // LINE-like header: iPhone mode has centered title; Android mode is left-aligned.
+        FrameLayout bar = new FrameLayout(this);
+        root.addView(bar, new LinearLayout.LayoutParams(-1, dp(62)));
+
+        headerInfo = new LinearLayout(this);
+        headerInfo.setOrientation(LinearLayout.VERTICAL);
+        bar.addView(headerInfo, new FrameLayout.LayoutParams(-1, -1));
+
+        pageTitle = new TextView(this);
+        pageTitle.setTextColor(Color.rgb(20, 22, 20));
+        pageTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
+        pageTitle.setTypeface(Typeface.create("sans-serif-medium", Typeface.BOLD));
+        pageTitle.setSingleLine(true);
+        pageTitle.setEllipsize(TextUtils.TruncateAt.END);
+        headerInfo.addView(pageTitle);
+
+        pageHost = new TextView(this);
+        pageHost.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        pageHost.setTextColor(Color.rgb(164, 166, 168));
+        pageHost.setSingleLine(true);
+        pageHost.setEllipsize(TextUtils.TruncateAt.MIDDLE);
+        headerInfo.addView(pageHost);
+
+        // The first layer stays minimal; editing the URL and all tools live under ⋮.
+        headerInfo.setOnClickListener(v -> showOverflowMenu(overflowButton));
+        headerInfo.setOnLongClickListener(v -> { showOverflowMenu(overflowButton); return true; });
+        bar.setOnLongClickListener(v -> { showOverflowMenu(overflowButton); return true; });
+
+        overflowButton = new TextView(this);
+        overflowButton.setText("⋮");
+        overflowButton.setTextSize(TypedValue.COMPLEX_UNIT_SP, 25);
+        overflowButton.setTextColor(Color.rgb(23, 25, 23));
+        overflowButton.setGravity(Gravity.CENTER);
+        overflowButton.setContentDescription(getString(R.string.tools));
+        FrameLayout.LayoutParams overflowParams = new FrameLayout.LayoutParams(dp(42), -1, Gravity.END);
+        overflowParams.rightMargin = dp(50);
+        bar.addView(overflowButton, overflowParams);
+        overflowButton.setOnClickListener(v -> showOverflowMenu(overflowButton));
+
+        TextView close = new TextView(this);
+        close.setText("×");
+        close.setTextSize(TypedValue.COMPLEX_UNIT_SP, 30);
+        close.setTextColor(Color.BLACK);
+        close.setGravity(Gravity.CENTER);
+        close.setContentDescription(getString(R.string.close));
+        close.setOnClickListener(v -> finish());
+        bar.addView(close, new FrameLayout.LayoutParams(dp(50), -1, Gravity.END));
+
+        applyHeaderStyle();
+
+        loading = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        loading.setMax(100);
+        loading.setVisibility(View.GONE);
+        root.addView(loading, new LinearLayout.LayoutParams(-1, dp(2)));
+
+        FrameLayout frame = new FrameLayout(this);
+        root.addView(frame, new LinearLayout.LayoutParams(-1, 0, 1));
+        webView = new WebView(this);
+        frame.addView(webView, new FrameLayout.LayoutParams(-1, -1));
+        webView.setBackgroundColor(Color.WHITE);
+
+        homeView = buildHome();
+        frame.addView(homeView, new FrameLayout.LayoutParams(-1, -1));
+
+        WebSettings settings = webView.getSettings();
+        settings.setJavaScriptEnabled(true);
+        settings.setDomStorageEnabled(true);
+        settings.setJavaScriptCanOpenWindowsAutomatically(false);
+        settings.setSupportMultipleWindows(false);
+        settings.setAllowFileAccess(false);
+        settings.setAllowContentAccess(true);
+        settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
+        settings.setGeolocationEnabled(true);
+        settings.setMediaPlaybackRequiresUserGesture(true);
+        settings.setBuiltInZoomControls(true);
+        settings.setDisplayZoomControls(false);
+        if (Build.VERSION.SDK_INT >= 26) settings.setSafeBrowsingEnabled(true);
+        CookieManager.getInstance().setAcceptCookie(true);
+        CookieManager.getInstance().setAcceptThirdPartyCookies(webView, false);
+        WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG);
+        webView.setWebViewClient(createWebViewClient());
+        webView.setWebChromeClient(createChromeClient());
+        autoScripts = new AutoScriptManager(this, webView,
+                getSharedPreferences(PREFS, MODE_PRIVATE), this::appendLog, () -> {});
+        configureDownloads();
+
+        if (savedInstanceState != null) {
+            webView.restoreState(savedInstanceState);
+            String restoredUrl = webView.getUrl();
+            homeView.setVisibility(restoredUrl == null || restoredUrl.equals("about:blank") ? View.VISIBLE : View.GONE);
+            refreshHeader();
+        } else if (!openExternalIntent(getIntent())) {
+            showHome();
+            Toast.makeText(this, R.string.menu_hint, Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private View buildHome() {
+        LinearLayout view = new LinearLayout(this);
+        view.setOrientation(LinearLayout.VERTICAL);
+        view.setGravity(Gravity.CENTER);
+        view.setBackgroundColor(Color.WHITE);
+        view.setPadding(dp(25), dp(20), dp(25), dp(60));
+
+        TextView logo = new TextView(this);
+        logo.setText("{ JS }");
+        logo.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
+        logo.setTextSize(TypedValue.COMPLEX_UNIT_SP, 36);
+        logo.setTextColor(Color.rgb(52, 60, 52));
+        logo.setGravity(Gravity.CENTER);
+        view.addView(logo, new LinearLayout.LayoutParams(-1, dp(70)));
+
+        TextView headline = new TextView(this);
+        headline.setText(R.string.home_main);
+        headline.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        headline.setTextColor(Color.rgb(32, 36, 32));
+        headline.setTextSize(TypedValue.COMPLEX_UNIT_SP, 21);
+        headline.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams headlineParams = new LinearLayout.LayoutParams(-1, -2);
+        headlineParams.topMargin = dp(10);
+        view.addView(headline, headlineParams);
+
+        TextView subtitle = new TextView(this);
+        subtitle.setText(R.string.home_subtitle);
+        subtitle.setTextColor(Color.rgb(124, 130, 124));
+        subtitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+        subtitle.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams subtitleParams = new LinearLayout.LayoutParams(-1, -2);
+        subtitleParams.topMargin = dp(14);
+        view.addView(subtitle, subtitleParams);
+
+        Button open = button(getString(R.string.open_url), true);
+        LinearLayout.LayoutParams buttonParams = new LinearLayout.LayoutParams(-1, dp(52));
+        buttonParams.topMargin = dp(27);
+        view.addView(open, buttonParams);
+        open.setOnClickListener(v -> showUrlDialog());
+        return view;
+    }
+
+    private WebViewClient createWebViewClient() {
+        return new WebViewClient() {
+            @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                if (!request.isForMainFrame()) return false;
+                String url = request.getUrl().toString();
+                String scheme = request.getUrl().getScheme();
+                if (scheme == null || scheme.equals("http") || scheme.equals("https") ||
+                        scheme.equals("about") || scheme.equals("data") || scheme.equals("blob") ||
+                        scheme.equals("javascript")) return false;
+                openExternalLink(url);
+                return true;
+            }
+            @Override public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
+                homeView.setVisibility("about:blank".equals(url) ? View.VISIBLE : View.GONE);
+                loading.setVisibility("about:blank".equals(url) ? View.GONE : View.VISIBLE);
+                autoScripts.onPageStarted();
+                refreshHeader();
+            }
+            @Override public void onPageFinished(WebView view, String url) {
+                refreshHeader();
+                autoScripts.onPageFinished(url);
+            }
+            @Override public void doUpdateVisitedHistory(WebView view, String url, boolean isReload) {
+                super.doUpdateVisitedHistory(view, url, isReload);
+                refreshHeader();
+                autoScripts.onHistoryChanged(url);
+            }
+            @Override public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
+                if (request.isForMainFrame()) appendLog("[Page error] " + error.getDescription());
+            }
+        };
+    }
+
+    private WebChromeClient createChromeClient() {
+        return new WebChromeClient() {
+            @Override public boolean onJsConfirm(WebView view, String url, String message, JsResult result) {
+                showPageJsDialog(url, message, result, false);
+                return true;
+            }
+            @Override public boolean onJsAlert(WebView view, String url, String message, JsResult result) {
+                showPageJsDialog(url, message, result, true);
+                return true;
+            }
+            @Override public void onReceivedTitle(WebView view, String title) { refreshHeader(); }
+            @Override public void onProgressChanged(WebView view, int progress) {
+                loading.setProgress(progress);
+                if (progress >= 100) loading.setVisibility(View.GONE);
+            }
+            @Override public boolean onConsoleMessage(ConsoleMessage message) {
+                String prefix = message.messageLevel() == ConsoleMessage.MessageLevel.ERROR ? "[ERROR] " : "[LOG] ";
+                appendLog(prefix + message.message() + "  (line " + message.lineNumber() + ")");
+                return true;
+            }
+            @Override public boolean onShowFileChooser(WebView view, ValueCallback<Uri[]> callback, FileChooserParams params) {
+                if (filePickerCallback != null) filePickerCallback.onReceiveValue(null);
+                filePickerCallback = callback;
+                try {
+                    startActivityForResult(params.createIntent(), PICK_FILE);
+                    return true;
+                } catch (ActivityNotFoundException e) {
+                    filePickerCallback = null;
+                    callback.onReceiveValue(null);
+                    return false;
+                }
+            }
+            @Override public void onGeolocationPermissionsShowPrompt(String origin, GeolocationPermissions.Callback callback) {
+                runOnUiThread(() -> askForGeolocation(origin, callback));
+            }
+            @Override public void onPermissionRequest(PermissionRequest request) {
+                runOnUiThread(() -> askForMedia(request));
+            }
+            @Override public void onPermissionRequestCanceled(PermissionRequest request) {
+                if (mediaRequest == request) mediaRequest = null;
+            }
+        };
+    }
+
+    private void refreshHeader() {
+        if (webView == null) return;
+        String url = webView.getUrl();
+        if (url == null || url.equals("about:blank")) {
+            pageTitle.setText(R.string.home_title);
+            pageHost.setText(R.string.home_hint);
+            return;
+        }
+        Uri uri = Uri.parse(url);
+        String host = uri.getHost();
+        String title = webView.getTitle();
+        pageTitle.setText(title == null || title.trim().isEmpty() || title.equals(url)
+                ? (host == null ? url : host) : title);
+        pageHost.setText(host == null ? url : host);
+    }
+
+    private void showUrlDialog() {
+        EditText input = new EditText(this);
+        input.setSingleLine(true);
+        input.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
+        input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
+        input.setHint(R.string.url_hint);
+        String current = webView.getUrl();
+        if (current != null && !current.equals("about:blank")) {
+            input.setText(current);
+            input.selectAll();
+        }
+        LinearLayout wrapper = new LinearLayout(this);
+        wrapper.setPadding(dp(22), dp(4), dp(22), dp(4));
+        wrapper.setOrientation(LinearLayout.VERTICAL);
+        wrapper.addView(input, new LinearLayout.LayoutParams(-1, -2));
+
+        // Version is visible here as requested, and also at the bottom of the ⋮ menu.
+        TextView version = new TextView(this);
+        version.setText(getString(R.string.app_name) + " · v" + BuildConfig.VERSION_NAME);
+        version.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        version.setTextColor(Color.rgb(153, 156, 158));
+        LinearLayout.LayoutParams versionParams = new LinearLayout.LayoutParams(-1, dp(32));
+        versionParams.topMargin = dp(8);
+        wrapper.addView(version, versionParams);
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle(R.string.open_url)
+                .setView(wrapper)
+                .setPositiveButton(R.string.open, (d, which) -> navigate(input.getText().toString()))
+                .setNegativeButton(R.string.cancel, null)
+                .create();
+        dialog.show();
+        styleDialogButtons(dialog);
+        input.requestFocus();
+        Window window = dialog.getWindow();
+        if (window != null) window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE);
+    }
+
+    private boolean isCenteredHeader() {
+        return "ios".equals(getSharedPreferences(PREFS, MODE_PRIVATE).getString("header_style", "android"));
+    }
+
+    private void applyHeaderStyle() {
+        if (headerInfo == null) return;
+        boolean centered = isCenteredHeader();
+        headerInfo.setGravity(centered ? Gravity.CENTER : Gravity.CENTER_VERTICAL);
+        pageTitle.setGravity(centered ? Gravity.CENTER : Gravity.START);
+        pageHost.setGravity(centered ? Gravity.CENTER : Gravity.START);
+        FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) headerInfo.getLayoutParams();
+        params.leftMargin = dp(centered ? 108 : 18);
+        params.rightMargin = dp(108);
+        headerInfo.setLayoutParams(params);
+    }
+
+    private void chooseHeaderStyle(Button selector) {
+        String[] labels = {getString(R.string.style_ios), getString(R.string.style_android)};
+        int current = isCenteredHeader() ? 0 : 1;
+        new AlertDialog.Builder(this).setTitle(R.string.header_style)
+                .setSingleChoiceItems(labels, current, (dialog, which) -> {
+                    getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                            .putString("header_style", which == 0 ? "ios" : "android").apply();
+                    applyHeaderStyle();
+                    if (selector != null) selector.setText(which == 0 ? "iPhone" : "Android");
+                    dialog.dismiss();
+                }).setNegativeButton(R.string.cancel, null).show();
+    }
+
+    private void navigate(String typed) {
+        String value = typed.trim();
+        if (value.isEmpty()) return;
+        if (value.regionMatches(true, 0, "javascript:", 0, 11)) {
+            executeJs(value.substring(11));
+            Toast.makeText(this, R.string.js_success, Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (value.equalsIgnoreCase("about:blank")) { showHome(); return; }
+        if (value.matches("(?i)^https?://.*")) {
+            webView.loadUrl(value);
+        } else if (value.contains(" ") || !(value.contains(".") || value.startsWith("localhost") || value.contains(":"))) {
+            webView.loadUrl("https://www.google.com/search?q=" + Uri.encode(value));
+        } else {
+            boolean local = value.startsWith("localhost") || value.startsWith("127.") ||
+                    value.startsWith("192.168.") || value.startsWith("10.") ||
+                    value.matches("172\\.(1[6-9]|2[0-9]|3[01])\\..*");
+            webView.loadUrl((local ? "http://" : "https://") + value);
+        }
+        homeView.setVisibility(View.GONE);
+    }
+
+    private void showHome() {
+        webView.loadUrl("about:blank");
+        homeView.setVisibility(View.VISIBLE);
+        pageTitle.setText(R.string.home_title);
+        pageHost.setText(R.string.home_hint);
+    }
+
+    // Native, rounded overflow menu inspired by the Android in-app browser screenshot.
+    // No tab manager: this browser intentionally keeps only one WebView.
+    private void showOverflowMenu(View anchor) {
+        if (anchor == null) return;
+        if (overflowPopup != null && overflowPopup.isShowing()) {
+            overflowPopup.dismiss();
+            return;
+        }
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(12), dp(12), dp(12), dp(8));
+        panel.setBackground(rounded(Color.WHITE, 19));
+
+        LinearLayout shortcuts = new LinearLayout(this);
+        shortcuts.setOrientation(LinearLayout.HORIZONTAL);
+        shortcuts.setGravity(Gravity.CENTER_VERTICAL);
+        panel.addView(shortcuts, new LinearLayout.LayoutParams(-1, dp(90)));
+        addMenuShortcut(shortcuts, "⌕", R.string.open_url, this::showUrlDialog);
+        addMenuShortcut(shortcuts, "↻", R.string.reload, () -> webView.reload());
+        addMenuDivider(panel);
+
+        addMenuItem(panel, "‹", R.string.back, () -> {
+            if (webView.canGoBack()) webView.goBack();
+            else Toast.makeText(this, R.string.no_history, Toast.LENGTH_SHORT).show();
+        });
+        addMenuItem(panel, "⌂", R.string.home, this::showHome);
+        addMenuItem(panel, "⊖", R.string.zoom_out, () -> webView.zoomOut());
+        addMenuItem(panel, "↗", R.string.share, this::sharePage);
+        addMenuItem(panel, "⚙", R.string.app_permissions, this::openAppPermissions);
+        addMenuDivider(panel);
+        addMenuItem(panel, "JS", R.string.auto_scripts, () -> autoScripts.showManager());
+        addMenuItem(panel, "›_", R.string.console, this::showConsole);
+        addMenuItem(panel, "▤", R.string.header_style, () -> chooseHeaderStyle(null));
+        addMenuItem(panel, "文", R.string.language, this::chooseLanguage);
+        addMenuItem(panel, "⌫", R.string.clear_data, this::clearBrowsingData);
+        addMenuDivider(panel);
+
+        TextView version = new TextView(this);
+        version.setText(getString(R.string.app_name) + "  ·  v" + BuildConfig.VERSION_NAME);
+        version.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        version.setTextColor(Color.rgb(157, 159, 161));
+        version.setGravity(Gravity.CENTER);
+        panel.addView(version, new LinearLayout.LayoutParams(-1, dp(43)));
+
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(false);
+        scroll.setVerticalScrollBarEnabled(false);
+        scroll.setBackground(rounded(Color.WHITE, 19));
+        scroll.addView(panel);
+        int width = Math.min(dp(310), getResources().getDisplayMetrics().widthPixels - dp(24));
+        int[] pos = new int[2];
+        anchor.getLocationOnScreen(pos);
+        int top = pos[1] + anchor.getHeight() - dp(3);
+        int available = getResources().getDisplayMetrics().heightPixels - top - dp(16);
+        int height = Math.min(dp(575), Math.max(dp(225), available));
+        PopupWindow popup = new PopupWindow(scroll, width, height, true);
+        popup.setBackgroundDrawable(rounded(Color.WHITE, 19));
+        popup.setElevation(dp(13));
+        popup.setOutsideTouchable(true);
+        popup.setClippingEnabled(true);
+        popup.setOnDismissListener(() -> {
+            if (overflowPopup == popup) overflowPopup = null;
+        });
+        overflowPopup = popup;
+        popup.showAtLocation(anchor, Gravity.TOP | Gravity.RIGHT, dp(10), top);
+    }
+
+    private void addMenuShortcut(LinearLayout parent, String glyph, int title, Runnable command) {
+        LinearLayout cell = new LinearLayout(this);
+        cell.setOrientation(LinearLayout.VERTICAL);
+        cell.setGravity(Gravity.CENTER);
+        parent.addView(cell, new LinearLayout.LayoutParams(0, -1, 1));
+        TextView icon = new TextView(this);
+        icon.setText(glyph);
+        icon.setTextColor(Color.rgb(25, 26, 25));
+        icon.setTextSize(TypedValue.COMPLEX_UNIT_SP, 27);
+        icon.setGravity(Gravity.CENTER);
+        cell.addView(icon, new LinearLayout.LayoutParams(-1, dp(42)));
+        TextView label = new TextView(this);
+        label.setText(title);
+        label.setTextColor(Color.rgb(40, 41, 40));
+        label.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        label.setGravity(Gravity.CENTER);
+        cell.addView(label);
+        cell.setOnClickListener(v -> {
+            dismissOverflow();
+            command.run();
+        });
+    }
+
+    private void addMenuItem(LinearLayout panel, String glyph, int title, Runnable command) {
+        LinearLayout item = new LinearLayout(this);
+        item.setOrientation(LinearLayout.HORIZONTAL);
+        item.setGravity(Gravity.CENTER_VERTICAL);
+        item.setPadding(dp(10), 0, dp(8), 0);
+        panel.addView(item, new LinearLayout.LayoutParams(-1, dp(50)));
+        TextView icon = new TextView(this);
+        icon.setText(glyph);
+        icon.setTypeface(Typeface.create("sans-serif", Typeface.NORMAL));
+        icon.setTextSize(TypedValue.COMPLEX_UNIT_SP, glyph.length() > 1 ? 16 : 23);
+        icon.setTextColor(Color.rgb(36, 38, 36));
+        icon.setGravity(Gravity.CENTER);
+        item.addView(icon, new LinearLayout.LayoutParams(dp(38), -1));
+        TextView label = new TextView(this);
+        label.setText(title);
+        label.setTypeface(Typeface.create("sans-serif", Typeface.NORMAL));
+        label.setTextColor(Color.rgb(39, 40, 39));
+        label.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+        LinearLayout.LayoutParams textParams = new LinearLayout.LayoutParams(-1, -2);
+        textParams.leftMargin = dp(8);
+        item.addView(label, textParams);
+        item.setOnClickListener(v -> {
+            dismissOverflow();
+            command.run();
+        });
+    }
+
+    private void addMenuDivider(LinearLayout parent) {
+        View line = new View(this);
+        line.setBackgroundColor(Color.rgb(237, 238, 238));
+        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, dp(1));
+        p.setMargins(dp(9), dp(6), dp(9), dp(6));
+        parent.addView(line, p);
+    }
+
+    private void dismissOverflow() {
+        if (overflowPopup != null) overflowPopup.dismiss();
+    }
+
+    private void sharePage() {
+        String url = webView.getUrl();
+        if (url == null || url.equals("about:blank")) {
+            Toast.makeText(this, R.string.no_webpage, Toast.LENGTH_SHORT).show();
+            return;
+        }
+        Intent share = new Intent(Intent.ACTION_SEND);
+        share.setType("text/plain");
+        share.putExtra(Intent.EXTRA_TEXT, url);
+        startActivity(Intent.createChooser(share, getString(R.string.share)));
+    }
+
+    private void openAppPermissions() {
+        Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                Uri.parse("package:" + getPackageName()));
+        try { startActivity(intent); }
+        catch (Exception ignored) {
+            Toast.makeText(this, R.string.unsupported_link, Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private void styleDialogButtons(AlertDialog dialog) {
+        Button positive = dialog.getButton(AlertDialog.BUTTON_POSITIVE);
+        Button negative = dialog.getButton(AlertDialog.BUTTON_NEGATIVE);
+        if (positive != null) positive.setTextColor(Color.rgb(132, 190, 124));
+        if (negative != null) negative.setTextColor(Color.rgb(38, 38, 38));
+    }
+
+    // The browser owns these dialogs; the website CSS is not changed.
+    // The native dialog is drawn on a transparent window so its corners are truly rounded.
+    private void showPageJsDialog(String url, String message, JsResult result, boolean alert) {
+        Dialog dialog = new Dialog(this);
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+        dialog.setCancelable(true);
+        dialog.setCanceledOnTouchOutside(false);
+        dialog.setOnCancelListener(d -> result.cancel());
+
+        LinearLayout body = new LinearLayout(this);
+        body.setOrientation(LinearLayout.VERTICAL);
+        body.setBackground(rounded(Color.WHITE, 18));
+        body.setClipToOutline(true);
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(dp(24), dp(24), dp(24), dp(24));
+        body.addView(content, new LinearLayout.LayoutParams(-1, -2));
+
+        TextView host = new TextView(this);
+        String domain = null;
+        try { if (url != null) domain = Uri.parse(url).getHost(); }
+        catch (Exception ignored) { }
+        host.setText(domain == null ? getString(R.string.app_name) : domain);
+        host.setTextColor(Color.rgb(24, 24, 24));
+        host.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
+        host.setTypeface(Typeface.create("sans-serif-medium", Typeface.BOLD));
+        host.setGravity(Gravity.CENTER);
+        content.addView(host, new LinearLayout.LayoutParams(-1, -2));
+
+        TextView text = new TextView(this);
+        text.setText(message);
+        text.setTextColor(Color.rgb(121, 124, 123));
+        text.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+        text.setGravity(Gravity.CENTER);
+        text.setLineSpacing(dp(4), 1f);
+        LinearLayout.LayoutParams messageParams = new LinearLayout.LayoutParams(-1, -2);
+        messageParams.topMargin = dp(14);
+        messageParams.bottomMargin = 0;
+        content.addView(text, messageParams);
+
+        // Explicit equal weights make Cancel and Confirm occupy exactly half each.
+        LinearLayout actions = new LinearLayout(this);
+        actions.setOrientation(LinearLayout.HORIZONTAL);
+        actions.setGravity(Gravity.CENTER_VERTICAL);
+        body.addView(actions, new LinearLayout.LayoutParams(-1, dp(56)));
+        if (!alert) {
+            TextView cancel = jsDialogAction(getString(R.string.cancel), Color.rgb(36, 36, 36));
+            actions.addView(cancel, new LinearLayout.LayoutParams(0, -1, 1f));
+            cancel.setOnClickListener(v -> {
+                dialog.dismiss();
+                result.cancel();
+            });
+        }
+        TextView confirm = jsDialogAction(getString(R.string.confirm), Color.rgb(132, 190, 124));
+        actions.addView(confirm, new LinearLayout.LayoutParams(0, -1, 1f));
+        confirm.setOnClickListener(v -> {
+            dialog.dismiss();
+            result.confirm();
+        });
+        // An alert has only one action, occupying the full width.
+
+        dialog.setContentView(body);
+        dialog.show();
+        Window window = dialog.getWindow();
+        if (window != null) {
+            window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+            window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+            WindowManager.LayoutParams params = window.getAttributes();
+            params.width = Math.min(getResources().getDisplayMetrics().widthPixels - dp(36), dp(340));
+            params.height = WindowManager.LayoutParams.WRAP_CONTENT;
+            params.gravity = Gravity.CENTER;
+            params.dimAmount = 0.48f;
+            window.setAttributes(params);
+        }
+    }
+
+    private TextView jsDialogAction(String label, int color) {
+        TextView action = new TextView(this);
+        action.setText(label);
+        action.setTextColor(color);
+        action.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
+        action.setTypeface(Typeface.create("sans-serif-medium", Typeface.BOLD));
+        action.setGravity(Gravity.CENTER);
+        action.setClickable(true);
+        action.setFocusable(true);
+        return action;
+    }
+
+    /** In-page JavaScript (not a Linux shell). No unsafe remote @JavascriptInterface. */
+    private void executeJs(String code) {
+        if (code.trim().isEmpty()) return;
+        if (code.regionMatches(true, 0, "javascript:", 0, 11)) code = code.substring(11);
+        String snippet = code;
+        appendLog("> " + snippet);
+        webView.evaluateJavascript(snippet, result -> {
+            if (result != null && !result.equals("null") && !result.equals("\"undefined\"")) {
+                appendLog("< " + result);
+            }
+        });
+    }
+
+    private void showConsole() {
+        if (consoleDialog != null && consoleDialog.isShowing()) return;
+        Dialog dialog = new Dialog(this);
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(16), dp(14), dp(16), dp(12));
+        panel.setBackgroundColor(Color.rgb(17, 22, 28));
+
+        TextView label = new TextView(this);
+        label.setText("›_  " + getString(R.string.console));
+        label.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
+        label.setTextColor(Color.rgb(133, 201, 255));
+        label.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18);
+        panel.addView(label, new LinearLayout.LayoutParams(-1, dp(45)));
+
+        consoleScroll = new ScrollView(this);
+        consoleScroll.setFillViewport(true);
+        consoleOutput = new TextView(this);
+        consoleOutput.setText(consoleHistory);
+        consoleOutput.setTextColor(Color.rgb(190, 224, 193));
+        consoleOutput.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        consoleOutput.setTypeface(Typeface.MONOSPACE);
+        consoleOutput.setTextIsSelectable(true);
+        consoleOutput.setPadding(dp(4), dp(6), dp(4), dp(8));
+        consoleScroll.addView(consoleOutput);
+        panel.addView(consoleScroll, new LinearLayout.LayoutParams(-1, 0, 1));
+
+        EditText input = new EditText(this);
+        input.setHint(R.string.console_hint);
+        input.setHintTextColor(Color.rgb(130, 148, 165));
+        input.setTextColor(Color.WHITE);
+        input.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+        input.setTypeface(Typeface.MONOSPACE);
+        input.setSingleLine(false);
+        input.setMinLines(3);
+        input.setMaxLines(7);
+        input.setGravity(Gravity.TOP | Gravity.START);
+        input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE |
+                InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
+        input.setBackground(rounded(Color.rgb(32, 42, 55), 8));
+        input.setPadding(dp(10), dp(10), dp(10), dp(10));
+        LinearLayout.LayoutParams inputParams = new LinearLayout.LayoutParams(-1, -2);
+        inputParams.topMargin = dp(10);
+        panel.addView(input, inputParams);
+
+        LinearLayout actions = new LinearLayout(this);
+        actions.setGravity(Gravity.END);
+        actions.setOrientation(LinearLayout.HORIZONTAL);
+        LinearLayout.LayoutParams actionsParams = new LinearLayout.LayoutParams(-1, dp(53));
+        actionsParams.topMargin = dp(8);
+        panel.addView(actions, actionsParams);
+
+        Button clear = button(getString(R.string.clear), false);
+        Button close = button(getString(R.string.close), false);
+        Button run = button("▶ " + getString(R.string.run), true);
+        actions.addView(clear, new LinearLayout.LayoutParams(0, dp(44), 1));
+        actions.addView(close, new LinearLayout.LayoutParams(0, dp(44), 1));
+        actions.addView(run, new LinearLayout.LayoutParams(0, dp(44), 1.25f));
+        clear.setOnClickListener(v -> {
+            consoleHistory.setLength(0);
+            consoleOutput.setText("");
+        });
+        close.setOnClickListener(v -> dialog.dismiss());
+        run.setOnClickListener(v -> {
+            String code = input.getText().toString();
+            if (code.trim().isEmpty()) return;
+            executeJs(code);
+            input.setText("");
+            ScrollView scroll = consoleScroll;
+            if (scroll != null) scroll.post(() -> scroll.fullScroll(View.FOCUS_DOWN));
+        });
+
+        dialog.setContentView(panel);
+        dialog.setOnDismissListener(d -> {
+            consoleDialog = null;
+            consoleOutput = null;
+            consoleScroll = null;
+        });
+        consoleDialog = dialog;
+        dialog.show();
+        Window window = dialog.getWindow();
+        if (window != null) {
+            int height = (int) (getResources().getDisplayMetrics().heightPixels * .80f);
+            window.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, height);
+            window.setBackgroundDrawableResource(android.R.color.transparent);
+            window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
+            window.setGravity(Gravity.BOTTOM);
+        }
+        consoleScroll.post(() -> consoleScroll.fullScroll(View.FOCUS_DOWN));
+    }
+
+    private void appendLog(String message) {
+        runOnUiThread(() -> {
+            consoleHistory.append(message).append('\n');
+            if (consoleHistory.length() > 25000) consoleHistory.delete(0, consoleHistory.length() - 20000);
+            if (consoleOutput != null) consoleOutput.setText(consoleHistory);
+            ScrollView scroll = consoleScroll;
+            if (scroll != null) scroll.post(() -> scroll.fullScroll(View.FOCUS_DOWN));
+        });
+    }
+
+    private void chooseLanguage() {
+        String[] choices = { getString(R.string.system_language), getString(R.string.traditional_chinese), getString(R.string.english) };
+        String[] keys = { "system", "zh-Hant-TW", "en" };
+        String current = getSharedPreferences(PREFS, MODE_PRIVATE).getString("language", "zh-Hant-TW");
+        int selected = current.startsWith("zh") ? 1 : current.startsWith("en") ? 2 : 0;
+        new AlertDialog.Builder(this).setTitle(R.string.language)
+                .setSingleChoiceItems(choices, selected, (dialog, which) -> {
+                    getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString("language", keys[which]).apply();
+                    dialog.dismiss();
+                    recreate();
+                }).setNegativeButton(R.string.cancel, null).show();
+    }
+
+    private void clearBrowsingData() {
+        new AlertDialog.Builder(this).setTitle(R.string.clear_data)
+                .setMessage(R.string.clear_data_question)
+                .setPositiveButton(R.string.clear, (dialog, which) -> {
+                    CookieManager manager = CookieManager.getInstance();
+                    manager.removeAllCookies(null);
+                    manager.flush();
+                    WebStorage.getInstance().deleteAllData();
+                    webView.clearCache(true);
+                    webView.clearHistory();
+                    consoleHistory.setLength(0);
+                    showHome();
+                    Toast.makeText(this, R.string.cleared, Toast.LENGTH_SHORT).show();
+                }).setNegativeButton(R.string.cancel, null).show();
+    }
+
+    private void configureDownloads() {
+        webView.setDownloadListener((url, userAgent, contentDisposition, mimeType, length) -> {
+            try {
+                if (!url.startsWith("http://") && !url.startsWith("https://")) throw new IllegalArgumentException("Download URL");
+                DownloadManager.Request request = new DownloadManager.Request(Uri.parse(url));
+                String fileName = URLUtil.guessFileName(url, contentDisposition, mimeType)
+                        .replace('/', '_').replace('\\', '_');
+                request.setTitle(fileName);
+                if (mimeType != null) request.setMimeType(mimeType);
+                if (userAgent != null) request.addRequestHeader("User-Agent", userAgent);
+                String cookie = CookieManager.getInstance().getCookie(url);
+                if (cookie != null) request.addRequestHeader("Cookie", cookie);
+                request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+                if (Build.VERSION.SDK_INT >= 29) {
+                    request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName);
+                } else {
+                    request.setDestinationInExternalFilesDir(this, Environment.DIRECTORY_DOWNLOADS, fileName);
+                }
+                DownloadManager manager = (DownloadManager) getSystemService(DOWNLOAD_SERVICE);
+                if (manager == null) throw new IllegalStateException("No DownloadManager");
+                manager.enqueue(request);
+                Toast.makeText(this, R.string.download_started, Toast.LENGTH_SHORT).show();
+            } catch (Exception e) {
+                appendLog("[Download error] " + e.getMessage());
+                Toast.makeText(this, R.string.download_failed, Toast.LENGTH_SHORT).show();
+            }
+        });
+    }
+
+    private void askForMedia(PermissionRequest request) {
+        new AlertDialog.Builder(this).setTitle(R.string.allow)
+                .setMessage(getString(R.string.permission_request, request.getOrigin().toString()))
+                .setPositiveButton(R.string.allow, (dialog, which) -> {
+                    mediaRequest = request;
+                    List<String> needed = new ArrayList<>();
+                    for (String resource : request.getResources()) {
+                        if (PermissionRequest.RESOURCE_VIDEO_CAPTURE.equals(resource)
+                                && checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED)
+                            needed.add(Manifest.permission.CAMERA);
+                        if (PermissionRequest.RESOURCE_AUDIO_CAPTURE.equals(resource)
+                                && checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED)
+                            needed.add(Manifest.permission.RECORD_AUDIO);
+                    }
+                    if (needed.isEmpty()) grantMediaIfAllowed();
+                    else requestPermissions(needed.toArray(new String[0]), MEDIA_PERMISSIONS);
+                })
+                .setNegativeButton(R.string.deny, (dialog, which) -> request.deny())
+                .setOnCancelListener(dialog -> request.deny())
+                .show();
+    }
+
+    private void grantMediaIfAllowed() {
+        if (mediaRequest == null) return;
+        List<String> allowed = new ArrayList<>();
+        for (String resource : mediaRequest.getResources()) {
+            if (PermissionRequest.RESOURCE_VIDEO_CAPTURE.equals(resource)
+                    && checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED)
+                allowed.add(resource);
+            if (PermissionRequest.RESOURCE_AUDIO_CAPTURE.equals(resource)
+                    && checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED)
+                allowed.add(resource);
+        }
+        if (allowed.isEmpty()) mediaRequest.deny();
+        else mediaRequest.grant(allowed.toArray(new String[0]));
+        mediaRequest = null;
+    }
+
+    private void askForGeolocation(String origin, GeolocationPermissions.Callback callback) {
+        new AlertDialog.Builder(this).setTitle(R.string.allow)
+                .setMessage(getString(R.string.location_request, origin))
+                .setPositiveButton(R.string.allow, (dialog, which) -> {
+                    if (hasLocationPermission()) callback.invoke(origin, true, false);
+                    else {
+                        geolocationCallback = callback;
+                        geolocationOrigin = origin;
+                        requestPermissions(new String[]{Manifest.permission.ACCESS_FINE_LOCATION,
+                                Manifest.permission.ACCESS_COARSE_LOCATION}, LOCATION_PERMISSIONS);
+                    }
+                }).setNegativeButton(R.string.deny, (dialog, which) -> callback.invoke(origin, false, false))
+                .setOnCancelListener(dialog -> callback.invoke(origin, false, false)).show();
+    }
+
+    private boolean hasLocationPermission() {
+        return checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+                || checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == MEDIA_PERMISSIONS) grantMediaIfAllowed();
+        if (requestCode == LOCATION_PERMISSIONS && geolocationCallback != null) {
+            geolocationCallback.invoke(geolocationOrigin, hasLocationPermission(), false);
+            geolocationCallback = null;
+            geolocationOrigin = null;
+        }
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == PICK_FILE && filePickerCallback != null) {
+            filePickerCallback.onReceiveValue(WebChromeClient.FileChooserParams.parseResult(resultCode, data));
+            filePickerCallback = null;
+        }
+    }
+
+    private boolean openExternalIntent(Intent intent) {
+        if (intent != null && Intent.ACTION_VIEW.equals(intent.getAction()) && intent.getData() != null) {
+            Uri uri = intent.getData();
+            String scheme = uri.getScheme();
+            if ("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme)) {
+                navigate(uri.toString());
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void openExternalLink(String url) {
+        try {
+            if (url.startsWith("intent://")) {
+                Intent intent = Intent.parseUri(url, Intent.URI_INTENT_SCHEME);
+                intent.addCategory(Intent.CATEGORY_BROWSABLE);
+                intent.setComponent(null);
+                intent.setSelector(null);
+                try { startActivity(intent); }
+                catch (Exception e) {
+                    String fallback = intent.getStringExtra("browser_fallback_url");
+                    if (fallback != null && (fallback.startsWith("http://") || fallback.startsWith("https://"))) navigate(fallback);
+                    else Toast.makeText(this, R.string.unsupported_link, Toast.LENGTH_SHORT).show();
+                }
+            } else {
+                startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
+            }
+        } catch (Exception e) {
+            Toast.makeText(this, R.string.unsupported_link, Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        openExternalIntent(intent);
+    }
+
+    @Override
+    public void onBackPressed() {
+        if (consoleDialog != null && consoleDialog.isShowing()) consoleDialog.dismiss();
+        else if (overflowPopup != null && overflowPopup.isShowing()) overflowPopup.dismiss();
+        else if (webView != null && webView.canGoBack()) webView.goBack();
+        else super.onBackPressed();
+    }
+
+    @Override
+    protected void onSaveInstanceState(Bundle outState) {
+        if (webView != null) webView.saveState(outState);
+        super.onSaveInstanceState(outState);
+    }
+
+    @Override
+    protected void onDestroy() {
+        if (filePickerCallback != null) filePickerCallback.onReceiveValue(null);
+        if (mediaRequest != null) mediaRequest.deny();
+        if (consoleDialog != null) consoleDialog.dismiss();
+        if (overflowPopup != null) overflowPopup.dismiss();
+        if (webView != null) {
+            webView.stopLoading();
+            ((ViewGroup) webView.getParent()).removeView(webView);
+            webView.destroy();
+        }
+        super.onDestroy();
+    }
+
+    private GradientDrawable rounded(int color, int radiusDp) {
+        GradientDrawable drawable = new GradientDrawable();
+        drawable.setColor(color);
+        drawable.setCornerRadius(dp(radiusDp));
+        return drawable;
+    }
+
+    private Button button(String text, boolean prominent) {
+        Button button = new Button(this);
+        button.setText(text);
+        button.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        button.setAllCaps(false);
+        button.setTextColor(prominent ? Color.WHITE : Color.rgb(174, 186, 198));
+        button.setBackground(rounded(prominent ? Color.rgb(52, 60, 52) : Color.rgb(38, 47, 57), 8));
+        button.setPadding(dp(5), 0, dp(5), 0);
+        return button;
+    }
+
+    private int dp(int dp) { return (int) (dp * getResources().getDisplayMetrics().density + 0.5f); }
+}
