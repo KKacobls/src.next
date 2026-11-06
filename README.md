@@ -1,4 +1,4 @@
-# JS Lite Browser for Android — v1.3.0
+# JS Lite Browser for Android — v1.3.1
 
 This is the dedicated **JS Lite Browser** branch of `KKacobls/src.next`. It builds a standalone Android WebView browser, not the massive Kiwi Chromium source tree. The Kiwi default branch remains unchanged.
 
@@ -22,6 +22,12 @@ This is the dedicated **JS Lite Browser** branch of `KKacobls/src.next`. It buil
 
 完整說明及示例請看 [JSON_CONFIG.md](js-lite-browser/JSON_CONFIG.md)。
 
+## 固定 APK 簽章（自 v1.3.1 開始）
+
+從 v1.3.1 起，正式提供給使用者的 APK 必須以同一個 PKCS12 憑證簽署，並由 GitHub Actions 保留加密 Keystore、驗證憑證 SHA-256 指紋。**必須一次性設定** GitHub Repository Secret `JSLITE_SIGNING_PASSWORD`，無密碼時只編譯測試，不發布新 APK。請依照 [SIGNING.md](js-lite-browser/SIGNING.md) 完成設定。
+
+舊的 v1.3.0 及更早 Debug APK 可能不相容，第一次轉換建議備份後卸載一次；完成固定簽章後，新版只要 `versionCode` 更高即可持續覆蓋更新。不要重新產生新的簽章。
+
 ## Build
 
 `js-lite-browser-build` 分支的 GitHub Actions 使用 Java 17、Android SDK 35、Gradle 8.11.1：
@@ -31,9 +37,9 @@ cd js-lite-browser
 gradle assembleDebug --no-daemon
 ```
 
-下載已編譯 APK：GitHub Releases 中的 `js-lite-browser-v1.3.0`。
+**經過固定簽章驗證的更新 APK**：首次設定 Secret 並成功執行 GitHub Actions 後，請至 GitHub Releases 中下載 `js-lite-browser-v1.3.1`。
 
-此為 **debug APK**，有簽章衝突時請先備份舊版自動 JS 設定再處理安裝；打包成功不等於已經在實體手機完成操作測試。
+`gradle assembleDebug` 僅作開發與編譯測試；正式更新使用 `assembleRelease` 和固定金鑰。打包成功不代表已在實體 Android 手機測試。
 
 ## 邊界與限制
 
