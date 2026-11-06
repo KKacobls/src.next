@@ -6,6 +6,9 @@ on:
       - 'js-lite-browser/**'
       - '.github/workflows/build-js-lite-apk.yml'
   workflow_dispatch:
+concurrency:
+  group: js-lite-browser-build-release
+  cancel-in-progress: true
 permissions:
   contents: write
 jobs:
@@ -40,6 +43,11 @@ jobs:
           TAG: js-lite-browser-v1.3.0
         run: |
           set -e
+          latest="$(gh api "repos/$GITHUB_REPOSITORY/branches/js-lite-browser-build" --jq '.commit.sha')"
+          if [ "$latest" != "$GITHUB_SHA" ]; then
+            echo "A newer commit is available; skip publishing stale APK."
+            exit 0
+          fi
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$TAG" JS-Lite-Browser-v1.3.0.apk --clobber --repo "$GITHUB_REPOSITORY"
           else
