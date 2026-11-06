@@ -273,6 +273,11 @@ public final class MainActivity extends Activity {
                 }
             }
         });
+        // The real extension needs tab APIs for every browser tab, including
+        // tabs opened later by its own dashboard or userscripts.
+        if (tampermonkey != null) {
+            configureSessionForExtension(session, tampermonkey);
+        }
         return session;
     }
 
