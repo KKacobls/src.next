@@ -1,6 +1,12 @@
-# Android APK 固定簽章（從 v1.3.1 開始）
+# KK瀏覽器 APK 固定簽章與套件名稱遷移（v1.3.3）
 
-## v1.3.2 最新更新
+## v1.3.3 套件衝突修正
+
+v1.3.3 起 **Android applicationId 已由 `com.kk.jsbrowser` 改為 `com.kk.kkbrowser`**，App 名稱改為「KK瀏覽器」。這樣可直接安裝在舊版旁邊，避免舊簽章無法覆蓋。**首次切換 v1.3.3 不是覆蓋更新，舊 App 與新 App 資料獨立**；舊版的腳本與設定可以先匯出 JSON，再至新版的「懶人模式」匯入。Cookie/網站登入資料不會因此轉移。
+
+套件更新規則：v1.3.3 之後的 KK瀏覽器一律使用 `com.kk.kkbrowser`，並重複使用原加密 keystore 解密得到的**同一固定簽章金鑰**，同時增加 `versionCode`，才能保持之後直接覆蓋更新、不必再卸載。
+
+## v1.3.2 歷史更新
 
 v1.3.2（`versionCode 10`）已沿用 v1.3.1（`versionCode 9`）建立的相同固定簽章，**安裝過 v1.3.1 的手機可以直接安裝 v1.3.2 覆蓋更新**，不需再次執行 `gh secret set`，也無需移除 App。GitHub Actions 會重新驗證原本的憑證指紋。
 
