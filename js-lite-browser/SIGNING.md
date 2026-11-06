@@ -1,5 +1,9 @@
 # Android APK 固定簽章（從 v1.3.1 開始）
 
+## v1.3.2 最新更新
+
+v1.3.2（`versionCode 10`）已沿用 v1.3.1（`versionCode 9`）建立的相同固定簽章，**安裝過 v1.3.1 的手機可以直接安裝 v1.3.2 覆蓋更新**，不需再次執行 `gh secret set`，也無需移除 App。GitHub Actions 會重新驗證原本的憑證指紋。
+
 ## 為什麼原本每次安裝都衝突？
 
 Android 要讓新版 APK **直接覆蓋安裝**，必須使用相同的 `applicationId`、相容的簽章憑證，且新版的 `versionCode` 更高。原本 GitHub Actions 每次產生 Runner 內的 Debug Key，導致不同建置的簽章不一致。
