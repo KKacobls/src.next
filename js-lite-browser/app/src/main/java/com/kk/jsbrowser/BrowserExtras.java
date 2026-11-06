@@ -281,20 +281,7 @@ public final class BrowserExtras {
         }
     }
     void choosePreset() {
-        new AlertDialog.Builder(activity).setTitle("介面風格（10 種）")
-            .setItems(PRESETS,(d,index)->{
-                JSONObject s=style();
-                try {
-                    s.put("preset",index);
-                    s.put("backgroundColor",COLORS[index]);
-                    s.put("textColor",FOREGROUNDS[index]);
-                    s.put("toolbarColor",ACCENTS[index]);
-                    s.put("borderRadius",index==9?6:18);
-                    s.put("toolbarHeight",index==9?46:62);
-                } catch(Exception ignored){}
-                saveStyle(s);
-                chooseToolbarPosition();
-            }).setNegativeButton("取消",null).show();
+        new ThemeStudio(activity,prefs,this::saveStyle).showGallery(style());
     }
     void chooseToolbarPosition() {
         String[] choices={"頂部工具列","底部工具列"};
@@ -324,6 +311,19 @@ public final class BrowserExtras {
             if(which==PROPERTY_NAMES.length+1) {chooseToolbarPosition();return;}
             JSONObject s=style();
             String key=PROPERTY_KEYS[which];
+            if (which < 3) {
+                ThemeStudio studio=new ThemeStudio(activity,prefs,this::saveStyle);
+                int initial=color(key,Color.WHITE);
+                studio.pickColor(PROPERTY_NAMES[which],initial,
+                    c->{ JSONObject preview=style();
+                         try {preview.put(key,String.format(java.util.Locale.US,"#%06X",c&0xffffff));}
+                         catch(Exception ignored){}
+                         refreshTheme.run();
+                    },
+                    c->{try{s.put(key,String.format(java.util.Locale.US,"#%06X",c&0xffffff));saveStyle(s);}
+                         catch(Exception ignored){}});
+                return;
+            }
             EditText value=new EditText(activity);
             value.setSingleLine(true);
             value.setText(s.optString(key));
