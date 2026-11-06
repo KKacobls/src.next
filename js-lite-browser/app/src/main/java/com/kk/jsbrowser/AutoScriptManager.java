@@ -49,6 +49,7 @@ final class AutoScriptManager {
         String matches = "";
         String code = "";
         boolean enabled = true;
+        boolean persist = true; // false: current app process only
     }
 
     AutoScriptManager(Activity activity, WebView browser, SharedPreferences prefs,
@@ -90,6 +91,7 @@ final class AutoScriptManager {
 
     private void runMatches(String url) {
         if (url == null || !(url.startsWith("http://") || url.startsWith("https://"))) return;
+        if (!prefs.getBoolean("autoScriptsEnabled_v120", true)) return;
         for (Script s : new ArrayList<>(scripts)) {
             String key = documentCounter + "|" + url + "|" + s.id;
             if (!s.enabled || executed.contains(key) || !matchesAny(s.matches, url)) continue;
@@ -123,6 +125,7 @@ final class AutoScriptManager {
                 script.matches = data.optString("matches", "");
                 script.code = data.optString("code", "");
                 script.enabled = data.optBoolean("enabled", true);
+                script.persist = true; // Saved scripts in legacy storage are permanent.
                 scripts.add(script);
             }
         } catch (Exception error) {
@@ -134,12 +137,14 @@ final class AutoScriptManager {
         JSONArray json = new JSONArray();
         try {
             for (Script s : scripts) {
+                if (!s.persist) continue;
                 JSONObject o = new JSONObject();
                 o.put("id", s.id);
                 o.put("name", s.name);
                 o.put("matches", s.matches);
                 o.put("code", s.code);
                 o.put("enabled", s.enabled);
+                o.put("persist", true);
                 json.put(o);
             }
             prefs.edit().putString(STORAGE, json.toString()).apply();
@@ -154,7 +159,7 @@ final class AutoScriptManager {
         choices[0] = "＋ " + activity.getString(R.string.add_script);
         for (int i = 0; i < scripts.size(); i++) {
             Script s = scripts.get(i);
-            choices[i + 1] = (s.enabled ? "● " : "○ ") + s.name + "\n" + s.matches.replace('\n', ' ');
+            choices[i + 1] = (s.enabled ? "● " : "○ ") + s.name + (s.persist ? " · 永久" : " · 本次執行") + "\n" + s.matches.replace('\n', ' ');
         }
         new AlertDialog.Builder(activity)
                 .setTitle(R.string.auto_scripts)
@@ -234,6 +239,10 @@ final class AutoScriptManager {
         enabled.setText(R.string.script_enabled);
         enabled.setChecked(target.enabled);
         form.addView(enabled);
+        CheckBox permanent = new CheckBox(activity);
+        permanent.setText("永久儲存（取消則僅本次 App 執行期間有效）");
+        permanent.setChecked(target.persist);
+        form.addView(permanent);
 
         Button test = new Button(activity);
         test.setText(R.string.test_now);
@@ -257,7 +266,7 @@ final class AutoScriptManager {
         dialog.setOnShowListener(d -> {
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
                 String n = name.getText().toString().trim();
-                String m = matches.getText().toString().trim();
+                String m = normalizeRules(matches.getText().toString().trim());
                 String c = code.getText().toString();
                 if (n.isEmpty() || m.isEmpty() || c.trim().isEmpty() || !validMatches(m)) {
                     Toast.makeText(activity, R.string.script_invalid, Toast.LENGTH_LONG).show();
@@ -271,6 +280,7 @@ final class AutoScriptManager {
                 target.matches = m;
                 target.code = c;
                 target.enabled = enabled.isChecked();
+                target.persist = permanent.isChecked();
                 if (adding) scripts.add(target);
                 // Editing an already-run script allows it to run again after the next navigation.
                 save();
@@ -291,6 +301,98 @@ final class AutoScriptManager {
         }
     }
 
+    /** Validate and prepare an atomic merge without changing active or saved scripts. */
+    JSONArray prepareImport(JSONArray imported) throws org.json.JSONException {
+        if (imported.length() > 100) throw new org.json.JSONException("最多一次匯入 100 個腳本");
+        JSONArray merged = exportScripts();
+        for (int i = 0; i < imported.length(); i++) {
+            JSONObject raw = imported.optJSONObject(i);
+            if (raw == null) throw new org.json.JSONException("scripts[" + i + "] 必須是物件");
+            String name = raw.getString("name").trim();
+            String code = raw.getString("code");
+            if (name.isEmpty() || name.length() > 120 || code.trim().isEmpty() || code.length() > 300000)
+                throw new org.json.JSONException("腳本名稱或程式碼無效：" + i);
+            String matches = normalizeRules(raw.has("match") ? raw.getString("match") : raw.getString("matches"));
+            if (!validMatches(matches)) throw new org.json.JSONException("不合法的網址規則：" + matches);
+            boolean enabled = raw.has("enabled") ? raw.getBoolean("enabled") : true;
+            boolean persist = raw.has("persist") ? raw.getBoolean("persist") : true;
+            if (raw.has("runAt") && !"document-end".equals(raw.getString("runAt")))
+                throw new org.json.JSONException("目前只支援 document-end");
+            JSONObject entry = new JSONObject();
+            entry.put("name", name);
+            entry.put("matches", matches);
+            entry.put("code", code);
+            entry.put("enabled", enabled);
+            entry.put("persist", persist);
+            int existingIndex = -1;
+            for (int j = 0; j < merged.length(); j++) {
+                JSONObject old = merged.optJSONObject(j);
+                if (old != null && name.equalsIgnoreCase(old.optString("name"))) {
+                    existingIndex = j;
+                    entry.put("id", old.optString("id"));
+                    break;
+                }
+            }
+            if (existingIndex < 0) {
+                entry.put("id", UUID.randomUUID().toString());
+                merged.put(entry);
+            } else {
+                merged.put(existingIndex, entry);
+            }
+        }
+        if (merged.length() > 100) throw new org.json.JSONException("腳本總數不能超過 100");
+        return merged;
+    }
+
+    JSONArray exportScripts() {
+        JSONArray result = new JSONArray();
+        for (Script s : scripts) {
+            try {
+                JSONObject entry = new JSONObject();
+                entry.put("id", s.id);
+                entry.put("name", s.name);
+                entry.put("matches", s.matches);
+                entry.put("code", s.code);
+                entry.put("enabled", s.enabled);
+                entry.put("persist", s.persist);
+                entry.put("runAt", "document-end");
+                result.put(entry);
+            } catch (Exception ignored) {}
+        }
+        return result;
+    }
+
+    /** The caller must call prepareImport first; only validated data gets committed. */
+    void applyPreparedImport(JSONArray merged) {
+        scripts.clear();
+        for (int i = 0; i < merged.length(); i++) {
+            JSONObject j = merged.optJSONObject(i);
+            if (j == null) continue;
+            Script script = new Script();
+            script.id = j.optString("id", script.id);
+            script.name = j.optString("name");
+            script.matches = j.optString("matches");
+            script.code = j.optString("code");
+            script.enabled = j.optBoolean("enabled", true);
+            script.persist = j.optBoolean("persist", true);
+            scripts.add(script);
+        }
+        executed.clear();
+        save();
+    }
+
+    /** Accept abc.com*, abc.com/path* and native *://example.com/* patterns. */
+    static String normalizeRules(String rules) {
+        StringBuilder out = new StringBuilder();
+        for (String original : rules.split("\\r?\\n")) {
+            String value = normalizeRule(original);
+            if (value.isEmpty()) continue;
+            if (out.length() > 0) out.append('\n');
+            out.append(value);
+        }
+        return out.toString();
+    }
+
     private static boolean validMatches(String rules) {
         int count = 0;
         for (String rule : rules.split("\\r?\\n")) {
@@ -307,6 +409,18 @@ final class AutoScriptManager {
         if (s.startsWith("//")) s = s.substring(2).trim();
         if (s.startsWith("@match")) s = s.substring(6).trim();
         if (s.startsWith("#")) return "";
+        if (!s.contains("://") && !s.isEmpty() && !s.contains(" ")) {
+            // A shorthand host is never interpreted as a substring of an unrelated host.
+            // abc.com* means *://abc.com/*, not abc.com.attacker.invalid.
+            int cut = s.indexOf('/');
+            String host = cut < 0 ? s : s.substring(0, cut);
+            String path = cut < 0 ? "/*" : s.substring(cut);
+            if (host.endsWith("*") && !host.startsWith("*.")) host = host.substring(0, host.length()-1);
+            if (!host.isEmpty() && !host.contains("*") && !host.contains("?") && !host.contains("#")) {
+                return "*://" + host + path;
+            }
+            if (host.startsWith("*.") && host.indexOf('*',1) == -1) return "*://" + host + path;
+        }
         return s;
     }
 
