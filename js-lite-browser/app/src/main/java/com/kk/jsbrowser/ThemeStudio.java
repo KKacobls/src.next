@@ -264,6 +264,53 @@ final class ThemeStudio {
             .setNegativeButton("取消",(d,w)->preview.accept(initial))
             .setOnCancelListener(d->preview.accept(initial)).show();
     }
+    /** Preview numeric layout attributes using both a slider and an exact-value field. */
+    void pickNumber(String title,double initial,double min,double max,double step,
+                    java.util.function.DoubleConsumer preview,
+                    java.util.function.DoubleConsumer save) {
+        LinearLayout panel=new LinearLayout(activity);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(20),dp(10),dp(20),dp(5));
+        TextView readout=new TextView(activity);
+        readout.setText(String.format(Locale.US,"目前 %.2f",initial));
+        panel.addView(readout);
+        SeekBar slider=new SeekBar(activity);
+        int steps=Math.max(1,(int)Math.round((max-min)/step));
+        slider.setMax(steps);
+        slider.setProgress((int)Math.round((initial-min)/step));
+        panel.addView(slider);
+        EditText input=new EditText(activity);
+        input.setSingleLine(true);
+        input.setInputType(InputType.TYPE_CLASS_NUMBER|InputType.TYPE_NUMBER_FLAG_DECIMAL|
+                           InputType.TYPE_NUMBER_FLAG_SIGNED);
+        input.setText(String.format(Locale.US,"%.2f",initial));
+        panel.addView(input);
+        slider.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){
+            public void onStartTrackingTouch(SeekBar b){}
+            public void onStopTrackingTouch(SeekBar b){}
+            public void onProgressChanged(SeekBar b,int value,boolean fromUser){
+                if(!fromUser)return;
+                double n=min+step*value;
+                input.setText(String.format(Locale.US,"%.2f",n));
+                readout.setText(String.format(Locale.US,"預覽 %.2f",n));
+                preview.accept(n);
+            }
+        });
+        final AlertDialog dialog=new AlertDialog.Builder(activity).setTitle(title)
+            .setView(panel).setPositiveButton("儲存",null)
+            .setNegativeButton("取消",(d,w)->preview.accept(initial))
+            .create();
+        dialog.setOnCancelListener(d->preview.accept(initial));
+        dialog.setOnShowListener(d->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
+            try{
+                double number=Double.parseDouble(input.getText().toString().trim());
+                if(!Double.isFinite(number)||number<min||number>max)throw new IllegalArgumentException();
+                save.accept(number);
+                dialog.dismiss();
+            }catch(Exception e){toast("數值範圍需介於 "+min+" 和 "+max);}
+        }));
+        dialog.show();
+    }
     private GradientDrawable rounded(int color,int radius){
         GradientDrawable bg=new GradientDrawable();bg.setColor(color);bg.setCornerRadius(dp(radius));return bg;
     }
