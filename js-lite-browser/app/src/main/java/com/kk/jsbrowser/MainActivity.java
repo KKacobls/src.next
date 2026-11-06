@@ -695,8 +695,9 @@ public class MainActivity extends Activity {
         panel.setBackground(rounded(Color.rgb(249,250,251),15));
         panel.setElevation(dp(14));
         panel.setPadding(dp(10),dp(12),dp(10),dp(10));
-        int maxWidth=Math.min(dp(330),getResources().getDisplayMetrics().widthPixels-dp(80));
-        int width=Math.max(dp(212),maxWidth);
+        int screenWidth=getResources().getDisplayMetrics().widthPixels;
+        // Keep about 40% of the webpage visible and touchable on phones.
+        int width=Math.min(dp(300),(int)(screenWidth*.60f));
         FrameLayout.LayoutParams placement=new FrameLayout.LayoutParams(width,-1,Gravity.END);
         browserFrame.addView(panel,placement);
         sidebarOverlay=panel;
