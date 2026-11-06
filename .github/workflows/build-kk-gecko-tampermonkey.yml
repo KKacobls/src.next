@@ -1,0 +1,125 @@
+name: KK Gecko Tampermonkey browser (signed APK)
+
+on:
+  push:
+    branches: [js-lite-browser-build]
+    paths:
+      - 'kk-gecko-browser/**'
+      - '.github/workflows/build-kk-gecko-tampermonkey.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: kk-gecko-tampermonkey-release
+  cancel-in-progress: true
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+
+      - name: Inspect GeckoView official dependency and Tampermonkey API
+        run: |
+          set -euo pipefail
+          grep -F "maven.mozilla.org/maven2/" kk-gecko-browser/settings.gradle
+          grep -F "org.mozilla.geckoview:geckoview:" kk-gecko-browser/app/build.gradle
+          grep -F "WebExtensionController" kk-gecko-browser/app/src/main/java/com/kk/geckomonkey/MainActivity.java
+          grep -F "addons.mozilla.org/api/v5/addons/addon/tampermonkey/" kk-gecko-browser/app/src/main/java/com/kk/geckomonkey/MainActivity.java
+          grep -F "applicationId 'com.kk.kkmonkey'" kk-gecko-browser/app/build.gradle
+
+      - name: Compile GeckoView browser (Debug)
+        working-directory: kk-gecko-browser
+        run: gradle assembleDebug --no-daemon --stacktrace
+
+      - name: Restore and verify existing stable signing key
+        shell: bash
+        env:
+          PASSWORD: ${{ secrets.JSLITE_SIGNING_PASSWORD }}
+        run: |
+          set -euo pipefail
+          [[ -n "$PASSWORD" ]] || { echo "::error::Missing JSLITE_SIGNING_PASSWORD"; exit 1; }
+          umask 077
+          mkdir -p "$RUNNER_TEMP/kk-gecko"
+          file="$RUNNER_TEMP/kk-gecko/signing.p12"
+          encrypted="signing/jslite-release-keystore.p12.enc"
+          fingerprint="signing/jslite-release-cert-sha256.txt"
+          test -s "$encrypted"
+          test -s "$fingerprint"
+          openssl enc -d -aes-256-cbc -pbkdf2 -iter 300000 \
+            -in "$encrypted" -out "$file" -pass env:PASSWORD
+          keytool -list -keystore "$file" -storetype PKCS12 \
+            -alias jslite-browser -storepass "$PASSWORD" >/dev/null
+          keytool -exportcert -keystore "$file" -storetype PKCS12 \
+            -alias jslite-browser -storepass "$PASSWORD" > "$RUNNER_TEMP/kk-gecko/cert.der"
+          actual="$(sha256sum "$RUNNER_TEMP/kk-gecko/cert.der" | awk '{print $1}')"
+          expected="$(tr -d '\r\n ' < "$fingerprint")"
+          [[ "$actual" == "$expected" ]] || { echo "::error::Existing certificate does not match pinned hash"; exit 1; }
+
+      - name: Build signed APK (release)
+        working-directory: kk-gecko-browser
+        env:
+          KK_GECKO_STORE_FILE: ${{ runner.temp }}/kk-gecko/signing.p12
+          KK_GECKO_STORE_PASSWORD: ${{ secrets.JSLITE_SIGNING_PASSWORD }}
+        run: gradle assembleRelease --no-daemon --stacktrace
+
+      - name: Verify package and pinned signing certificate
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk="kk-gecko-browser/app/build/outputs/apk/release/app-release.apk"
+          test -s "$apk"
+          aapt="$(find "$ANDROID_HOME/build-tools" -maxdepth 2 -type f -name aapt | sort -V | tail -1)"
+          apksigner="$(find "$ANDROID_HOME/build-tools" -maxdepth 2 -type f -name apksigner | sort -V | tail -1)"
+          test -x "$aapt"
+          test -x "$apksigner"
+          info="$("$aapt" dump badging "$apk" | grep '^package:')"
+          echo "$info"
+          [[ "$info" == *"name='com.kk.kkmonkey'"* ]] || exit 1
+          [[ "$info" == *"versionCode='1'"* ]] || exit 1
+          "$apksigner" verify --verbose --print-certs "$apk"
+          actual="$("$apksigner" verify --verbose --print-certs "$apk" \
+            | sed -nE 's/^.*certificate SHA-256 digest: ([[:xdigit:]]{64}).*$/\1/p' \
+            | tr '[:upper:]' '[:lower:]' | sort -u)"
+          expected="$(tr -d '\r\n ' < signing/jslite-release-cert-sha256.txt)"
+          [[ "$actual" == "$expected" ]] || { echo "::error::APK certificate differs from pinned key"; exit 1; }
+          cp "$apk" KK-Gecko-Tampermonkey-v0.1.0.apk
+          sha256sum KK-Gecko-Tampermonkey-v0.1.0.apk
+          echo "Signed GeckoView APK: $info" >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: KK-Gecko-Tampermonkey-v0.1.0
+          path: KK-Gecko-Tampermonkey-v0.1.0.apk
+          retention-days: 14
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: Publish APK from current commit
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: kk-gecko-tampermonkey-v0.1.0
+        run: |
+          set -euo pipefail
+          head="$(git rev-parse HEAD)"
+          remote="$(gh api "repos/$GITHUB_REPOSITORY/branches/js-lite-browser-build" --jq '.commit.sha')"
+          [[ "$remote" == "$head" ]] || { echo "::error::Outdated build, no release"; exit 1; }
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" KK-Gecko-Tampermonkey-v0.1.0.apk --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG" KK-Gecko-Tampermonkey-v0.1.0.apk \
+              --repo "$GITHUB_REPOSITORY" --target "$head" \
+              --title "KK瀏覽器 GeckoView + 原版 Tampermonkey 0.1.0" \
+              --notes "Independent GeckoView browser (com.kk.kkmonkey). Tap 安裝油猴 in the app to install the signed official XPI from Mozilla AMO after permission confirmation. Real WebExtension support, not a simulated userscript engine. Android 8+. See kk-gecko-browser/README.md. Android APK build and signing verified; real phone extension operation still requires testing." \
+              --prerelease
+          fi
