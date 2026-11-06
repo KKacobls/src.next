@@ -35,6 +35,7 @@ public final class BrowserExtras {
     private final String mobileUserAgent;
     private int versionTaps;
     private long lastTap;
+    private JSONObject previewStyle;
     private AutoScriptManager scripts;
     private java.util.function.Consumer<String> navigate;
     void bindActions(AutoScriptManager scripts, java.util.function.Consumer<String> navigate) {
@@ -241,10 +242,12 @@ public final class BrowserExtras {
         return j;
     }
     JSONObject style() {
+        if (previewStyle != null) return previewStyle;
         try { return new JSONObject(prefs.getString(STYLE, defaults().toString())); }
         catch(Exception e) {return defaults();}
     }
     private void saveStyle(JSONObject j) {
+        previewStyle = null;
         prefs.edit().putString(STYLE,j.toString()).apply();
         refreshTheme.run();
     }
@@ -261,11 +264,20 @@ public final class BrowserExtras {
         int foreground=color("textColor",Color.BLACK);
         int toolbar=color("toolbarColor",Color.WHITE);
         container.setBackgroundColor(background);
-        header.setBackgroundColor(toolbar);
+        android.graphics.drawable.GradientDrawable headerBg = new android.graphics.drawable.GradientDrawable();
+        headerBg.setColor(toolbar);
+        headerBg.setCornerRadius(dp(Math.max(0,Math.min(80,s.optInt("borderRadius",18)))));
+        int border=Math.max(0,Math.min(12,s.optInt("borderWidth",0)));
+        if(border>0)headerBg.setStroke(dp(border),foreground);
+        header.setBackground(headerBg);
+        header.setElevation(dp(Math.max(0,Math.min(35,s.optInt("shadow",8)))));
+        int spacing=Math.max(0,Math.min(35,s.optInt("spacing",8)));
+        header.setPadding(dp(spacing/2),0,dp(spacing/2),0);
         title.setTextColor(foreground);
         subtitle.setTextColor(foreground);
         menu.setTextColor(foreground);
         title.setTextSize(s.optInt("fontSize",16));
+        title.setLineSpacing(0,(float)s.optDouble("lineHeight",1.2));
         title.setTypeface(Typeface.DEFAULT,s.optInt("fontWeight",600)>=600?Typeface.BOLD:Typeface.NORMAL);
         menu.setTextSize(s.optInt("iconSize",25));
         ViewGroup.LayoutParams layout=header.getLayoutParams();
@@ -315,13 +327,15 @@ public final class BrowserExtras {
                 ThemeStudio studio=new ThemeStudio(activity,prefs,this::saveStyle);
                 int initial=color(key,Color.WHITE);
                 studio.pickColor(PROPERTY_NAMES[which],initial,
-                    c->{ JSONObject preview=style();
-                         try {preview.put(key,String.format(java.util.Locale.US,"#%06X",c&0xffffff));}
-                         catch(Exception ignored){}
-                         refreshTheme.run();
+                    c->{ try {
+                             JSONObject stage = new JSONObject(s.toString());
+                             stage.put(key,String.format(java.util.Locale.US,"#%06X",c&0xffffff));
+                             previewStyle=stage;
+                             refreshTheme.run();
+                         } catch(Exception ignored){}
                     },
                     c->{try{s.put(key,String.format(java.util.Locale.US,"#%06X",c&0xffffff));saveStyle(s);}
-                         catch(Exception ignored){}});
+                         catch(Exception ignored){previewStyle=null;refreshTheme.run();}});
                 return;
             }
             EditText value=new EditText(activity);
