@@ -59,6 +59,11 @@ final class ThemeStudio {
             theme.put("backgroundColor",background);
             theme.put("textColor",foreground);
             theme.put("toolbarColor",bar);
+            theme.put("dialogBackgroundColor",background);
+            theme.put("buttonColor",bar);
+            theme.put("buttonTextColor",foreground);
+            theme.put("accentColor",foreground);
+            theme.put("borderColor",foreground);
             theme.put("borderRadius",index==9?6:18);
             theme.put("toolbarHeight",index==9?48:62);
         }catch(Exception ignored){}
