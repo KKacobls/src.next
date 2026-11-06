@@ -1,4 +1,4 @@
-# JS Lite Browser v1.3 — JSON 設定檔規範
+# JS Lite Browser v1.3.2 — JSON 設定檔規範
 
 ## 基本格式
 
@@ -15,7 +15,6 @@
     "defaultZoom": 100
   },
   "developer": {
-    "sidebarEnabled": true,
     "autoScriptsEnabled": true,
     "scripts": [
       {
@@ -63,9 +62,12 @@
 | `browser.defaultZoom` | 整數 | 預設縮放百分比，50–200。 |
 | `browser.desktopMode` | 布林 | `true` 電腦版；`false` 手機版。 |
 | `developer.autoScriptsEnabled` | 布林 | 自動 JS 總開關，與個別 `enabled` 分開。 |
-| `developer.sidebarEnabled` | 布林 | 右側快捷抽屜設定；只有開發者模式開啟時才能滑出。 |
 | `developer.scripts` | 陣列 | 匯入腳本；未指定則不改變現有腳本。 |
 | `appearance` | 物件 | 介面屬性；未給欄位沿用原值。 |
+
+## 手動 JS 側邊工具（與自動腳本分開）
+
+從 `⋯ → 開發者工具 → 開啟 JS 側邊工具` 點選開啟。**不用邊緣滑動，也沒有 JSON 開關。** 面板的 JavaScript 輸入框按「執行 JS」才會在目前網頁執行，不能自行永久自動執行。最近一次手動輸入並執行的程式碼會在本機暫存，以便再次修改；自動腳本的 `persist`、`enabled` 仍只由腳本管理器／JSON 的 `developer.scripts` 控制。匯入舊版 JSON 的 `sidebarEnabled` 欄位會被忽略，保留其他設定。
 
 ## 腳本欄位
 
