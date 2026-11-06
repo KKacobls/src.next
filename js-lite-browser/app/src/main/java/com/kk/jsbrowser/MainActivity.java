@@ -71,6 +71,9 @@ public class MainActivity extends Activity {
     private static final String PREFS = "browser_settings";
 
     private WebView webView;
+    private LinearLayout browserRoot;
+    private FrameLayout browserBar;
+    private BrowserExtras extras;
     private TextView pageTitle;
     private TextView pageHost;
     private LinearLayout headerInfo;
@@ -124,6 +127,7 @@ public class MainActivity extends Activity {
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(Color.WHITE);
         setContentView(root);
+        browserRoot = root;
         if (Build.VERSION.SDK_INT >= 35) {
             getWindow().setStatusBarColor(Color.rgb(229, 230, 233));
             getWindow().setNavigationBarColor(Color.TRANSPARENT);
@@ -137,6 +141,7 @@ public class MainActivity extends Activity {
         // LINE-like header: iPhone mode has centered title; Android mode is left-aligned.
         FrameLayout bar = new FrameLayout(this);
         root.addView(bar, new LinearLayout.LayoutParams(-1, dp(62)));
+        browserBar = bar;
 
         headerInfo = new LinearLayout(this);
         headerInfo.setOrientation(LinearLayout.VERTICAL);
@@ -179,7 +184,7 @@ public class MainActivity extends Activity {
         close.setTextColor(Color.BLACK);
         close.setGravity(Gravity.CENTER);
         close.setContentDescription(getString(R.string.close));
-        close.setOnClickListener(v -> finish());
+        close.setOnClickListener(v -> { if (extras != null) extras.rememberClosed(); finish(); });
         bar.addView(close, new FrameLayout.LayoutParams(dp(50), -1, Gravity.END));
 
         applyHeaderStyle();
@@ -219,6 +224,9 @@ public class MainActivity extends Activity {
         autoScripts = new AutoScriptManager(this, webView,
                 getSharedPreferences(PREFS, MODE_PRIVATE), this::appendLog, () -> {});
         configureDownloads();
+        extras = new BrowserExtras(this, webView, this::applyCustomTheme);
+        extras.applyDesktop();
+        applyCustomTheme();
 
         if (savedInstanceState != null) {
             webView.restoreState(savedInstanceState);
@@ -294,6 +302,7 @@ public class MainActivity extends Activity {
             @Override public void onPageFinished(WebView view, String url) {
                 refreshHeader();
                 autoScripts.onPageFinished(url);
+                if (extras != null) extras.recordPage(url, view.getTitle());
             }
             @Override public void doUpdateVisitedHistory(WebView view, String url, boolean isReload) {
                 super.doUpdateVisitedHistory(view, url, isReload);
@@ -390,6 +399,7 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams versionParams = new LinearLayout.LayoutParams(-1, dp(32));
         versionParams.topMargin = dp(8);
         wrapper.addView(version, versionParams);
+        version.setOnClickListener(v -> extras.versionTapped());
 
         AlertDialog dialog = new AlertDialog.Builder(this)
                 .setTitle(R.string.open_url)
@@ -456,6 +466,7 @@ public class MainActivity extends Activity {
     }
 
     private void showHome() {
+        if (extras != null) extras.rememberClosed();
         webView.loadUrl("about:blank");
         homeView.setVisibility(View.VISIBLE);
         pageTitle.setText(R.string.home_title);
@@ -488,15 +499,26 @@ public class MainActivity extends Activity {
             else Toast.makeText(this, R.string.no_history, Toast.LENGTH_SHORT).show();
         });
         addMenuItem(panel, "⌂", R.string.home, this::showHome);
-        addMenuItem(panel, "⊖", R.string.zoom_out, () -> webView.zoomOut());
         addMenuItem(panel, "↗", R.string.share, this::sharePage);
         addMenuItem(panel, "⚙", R.string.app_permissions, this::openAppPermissions);
         addMenuDivider(panel);
-        addMenuItem(panel, "JS", R.string.auto_scripts, () -> autoScripts.showManager());
-        addMenuItem(panel, "›_", R.string.console, this::showConsole);
-        addMenuItem(panel, "▤", R.string.header_style, () -> chooseHeaderStyle(null));
+        addMenuItemLabel(panel, "◷", "瀏覽紀錄", extras::showHistory);
+        addMenuItemLabel(panel, "↶", "重新開啟最近關閉頁面", () -> {
+            extras.reopenClosed(); homeView.setVisibility(View.GONE);
+        });
+        addMenuItemLabel(panel, "⌕", "在網頁中搜尋", extras::searchInPage);
+        addMenuItemLabel(panel, "−", "縮小網頁（−10%）", () -> extras.zoom(false));
+        addMenuItemLabel(panel, "+", "放大網頁（+10%）", () -> extras.zoom(true));
+        addMenuItemLabel(panel, "▣", "電腦版／手機版", extras::desktopToggle);
+        addMenuDivider(panel);
+        addMenuItemLabel(panel, "{}", "JSON 設定匯入／匯出", extras::jsonSettings);
         addMenuItem(panel, "文", R.string.language, this::chooseLanguage);
         addMenuItem(panel, "⌫", R.string.clear_data, this::clearBrowsingData);
+        if (extras.developerEnabled()) {
+            addMenuDivider(panel);
+            addMenuItemLabel(panel, "⌘", "開發者工具", this::showDeveloperTools);
+            addMenuItemLabel(panel, "◇", "關閉開發者模式", extras::disableDeveloper);
+        }
         addMenuDivider(panel);
 
         TextView version = new TextView(this);
@@ -505,6 +527,7 @@ public class MainActivity extends Activity {
         version.setTextColor(Color.rgb(157, 159, 161));
         version.setGravity(Gravity.CENTER);
         panel.addView(version, new LinearLayout.LayoutParams(-1, dp(43)));
+        version.setOnClickListener(v -> extras.versionTapped());
 
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(false);
@@ -516,7 +539,7 @@ public class MainActivity extends Activity {
         anchor.getLocationOnScreen(pos);
         int top = pos[1] + anchor.getHeight() - dp(3);
         int available = getResources().getDisplayMetrics().heightPixels - top - dp(16);
-        int height = Math.min(dp(575), Math.max(dp(225), available));
+        int height = Math.min(dp(640), Math.max(dp(225), available));
         PopupWindow popup = new PopupWindow(scroll, width, height, true);
         popup.setBackgroundDrawable(rounded(Color.WHITE, 19));
         popup.setElevation(dp(13));
@@ -577,6 +600,51 @@ public class MainActivity extends Activity {
             dismissOverflow();
             command.run();
         });
+    }
+
+
+    private void addMenuItemLabel(LinearLayout parent, String glyph, String title, Runnable action) {
+        LinearLayout item=new LinearLayout(this);
+        item.setOrientation(LinearLayout.HORIZONTAL);
+        item.setGravity(Gravity.CENTER_VERTICAL);
+        item.setPadding(dp(10),0,dp(8),0);
+        parent.addView(item,new LinearLayout.LayoutParams(-1,dp(50)));
+        TextView symbol=new TextView(this);
+        symbol.setText(glyph);
+        symbol.setTextSize(TypedValue.COMPLEX_UNIT_SP, glyph.length()>1?16:23);
+        symbol.setGravity(Gravity.CENTER);
+        symbol.setTextColor(Color.rgb(36,38,36));
+        item.addView(symbol,new LinearLayout.LayoutParams(dp(38),-1));
+        TextView text=new TextView(this);
+        text.setText(title);
+        text.setTextSize(TypedValue.COMPLEX_UNIT_SP,15);
+        text.setTextColor(Color.rgb(39,40,39));
+        LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2);
+        p.leftMargin=dp(8);
+        item.addView(text,p);
+        item.setOnClickListener(v->{dismissOverflow();action.run();});
+    }
+
+    private void showDeveloperTools() {
+        String[] options={"JS 主控台","自動 JS 腳本","檢視網頁原始碼","CSS／介面屬性","10 種頂部與底部樣式","工具列位置","關閉開發者模式"};
+        new AlertDialog.Builder(this).setTitle("開發者工具")
+            .setItems(options,(d,which)->{
+                switch(which) {
+                    case 0: showConsole();break;
+                    case 1: autoScripts.showManager();break;
+                    case 2: extras.viewSource();break;
+                    case 3: extras.editStyle();break;
+                    case 4: extras.choosePreset();break;
+                    case 5: extras.chooseToolbarPosition();break;
+                    case 6: extras.disableDeveloper();break;
+                }
+            }).setNegativeButton("取消",null).show();
+    }
+
+    private void applyCustomTheme() {
+        if(extras==null || browserRoot==null || browserBar==null || pageTitle==null) return;
+        extras.applyTheme(browserRoot,pageTitle,pageHost,browserBar,overflowButton);
+        applyHeaderStyle();
     }
 
     private void addMenuDivider(LinearLayout parent) {
