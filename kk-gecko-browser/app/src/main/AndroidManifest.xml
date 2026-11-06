@@ -3,14 +3,14 @@
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
     <application
-        android:name=".BrowserApp"
+        android:name="com.kk.geckomonkey.BrowserApp"
         android:allowBackup="false"
         android:label="KK瀏覽器・油猴版"
         android:icon="@drawable/ic_kk_gecko"
         android:theme="@android:style/Theme.Material.Light.NoActionBar"
         android:usesCleartextTraffic="false">
         <activity
-            android:name=".MainActivity"
+            android:name="com.kk.geckomonkey.MainActivity"
             android:exported="true"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
