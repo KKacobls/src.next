@@ -534,7 +534,7 @@ public class MainActivity extends Activity {
         });
         addMenuItemLabel(panel,"⌕","在網頁中搜尋",this::showFindBar);
         addMenuItemLabel(panel,"↓","下載紀錄",downloads::show);
-        addMenuItemLabel(panel,"{}","JSON 設定匯入／匯出",extras::jsonSettings);
+        addMenuItemLabel(panel,"{}","懶人模式（JSON 匯入／匯出）",extras::jsonSettings);
         addMenuItemLabel(panel,"文","語言設定",this::chooseLanguage);
         if (extras.developerEnabled()) {
             addMenuDivider(panel);
@@ -669,9 +669,9 @@ public class MainActivity extends Activity {
 
     private void showDeveloperTools() {
         if(!extras.developerEnabled()) return;
-        String toggle = sidebarOverlay==null ? "開啟 JS 側邊工具" : "關閉 JS 側邊工具";
+        String toggle = sidebarOverlay==null ? "開啟側邊開發者工具" : "關閉側邊開發者工具";
         String[] options={"JS 主控台","自動 JS 腳本","檢視網頁原始碼","CSS／介面屬性",
-            "介面風格","工具列位置",toggle,"JSON 設定"};
+            "介面風格","工具列位置",toggle,"懶人模式（JSON 設定）"};
         new AlertDialog.Builder(this).setTitle("開發者工具")
             .setItems(options,(d,which)->{
                 switch(which){
@@ -708,7 +708,7 @@ public class MainActivity extends Activity {
         panel.addView(header,new LinearLayout.LayoutParams(-1,dp(44)));
 
         TextView title=new TextView(this);
-        title.setText("JS 快捷工具");
+        title.setText("開發者工具");
         title.setTextColor(Color.rgb(24,32,43));
         title.setTextSize(TypedValue.COMPLEX_UNIT_SP,17);
         title.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
@@ -718,12 +718,12 @@ public class MainActivity extends Activity {
         close.setText("×");close.setTextSize(TypedValue.COMPLEX_UNIT_SP,29);
         close.setTextColor(Color.rgb(55,65,81));
         close.setGravity(Gravity.CENTER);
-        close.setContentDescription("關閉 JS 側邊工具");
+        close.setContentDescription("關閉側邊開發者工具");
         header.addView(close,new LinearLayout.LayoutParams(dp(42),-1));
         close.setOnClickListener(v->closeSidebar());
 
         TextView hint=new TextView(this);
-        hint.setText("編寫 JavaScript，按執行就會在目前網頁執行");
+        hint.setText("JavaScript 即時執行（僅當前頁面）");
         hint.setTextSize(TypedValue.COMPLEX_UNIT_SP,11);
         hint.setTextColor(Color.rgb(100,110,121));
         panel.addView(hint);
@@ -787,20 +787,39 @@ public class MainActivity extends Activity {
             });
         });
 
-        View spacer=new View(this);
-        panel.addView(spacer,new LinearLayout.LayoutParams(1,0,1));
+        TextView sectionTitle=new TextView(this);
+        sectionTitle.setText("開發者工具快捷功能");
+        sectionTitle.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
+        sectionTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP,13);
+        sectionTitle.setTextColor(Color.rgb(33,45,63));
+        LinearLayout.LayoutParams titleParams=new LinearLayout.LayoutParams(-1,dp(31));
+        titleParams.topMargin=dp(7);
+        panel.addView(sectionTitle,titleParams);
 
-        Button console=button("查看 Console",false);
-        Button scripts=button("自動 JS 腳本",false);
-        Button source=button("檢視原始碼",false);
-        panel.addView(console,new LinearLayout.LayoutParams(-1,dp(44)));
-        LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,dp(44));p.topMargin=dp(5);
-        panel.addView(scripts,p);
-        LinearLayout.LayoutParams p2=new LinearLayout.LayoutParams(-1,dp(44));p2.topMargin=dp(5);
-        panel.addView(source,p2);
-        console.setOnClickListener(v->showConsole());
-        scripts.setOnClickListener(v->autoScripts.showManager());
-        source.setOnClickListener(v->extras.viewSource());
+        // Scrollable tool area fits short phone screens even with the keyboard open.
+        ScrollView toolScroll=new ScrollView(this);
+        toolScroll.setFillViewport(false);
+        panel.addView(toolScroll,new LinearLayout.LayoutParams(-1,0,1));
+        LinearLayout tools=new LinearLayout(this);
+        tools.setOrientation(LinearLayout.VERTICAL);
+        toolScroll.addView(tools,new ScrollView.LayoutParams(-1,-2));
+        String[] labels={
+            "JS 主控台","自動 JS 腳本","HTML 原始碼","CSS／介面屬性",
+            "介面風格","工具列位置","懶人模式（JSON）"
+        };
+        Runnable[] actions={
+            this::showConsole, autoScripts::showManager, extras::viewSource, extras::editStyle,
+            extras::choosePreset, extras::chooseToolbarPosition, extras::jsonSettings
+        };
+        for(int i=0;i<labels.length;i++){
+            final int idx=i;
+            Button toolButton=button(labels[i],false);
+            toolButton.setTextSize(TypedValue.COMPLEX_UNIT_SP,12);
+            LinearLayout.LayoutParams toolParams=new LinearLayout.LayoutParams(-1,dp(43));
+            toolParams.bottomMargin=dp(4);
+            tools.addView(toolButton,toolParams);
+            toolButton.setOnClickListener(v->actions[idx].run());
+        }
     }
 
     private void closeSidebar() {
