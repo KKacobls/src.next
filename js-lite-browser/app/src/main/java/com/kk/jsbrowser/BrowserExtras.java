@@ -41,13 +41,6 @@ public final class BrowserExtras {
     void bindActions(AutoScriptManager scripts, java.util.function.Consumer<String> navigate) {
         this.scripts = scripts; this.navigate = navigate;
     }
-    boolean sidebarEnabled() { return developerEnabled() && prefs.getBoolean("developer_sidebar_v130", false); }
-    void toggleSidebar() {
-        if (!developerEnabled()) return;
-        boolean next = !prefs.getBoolean("developer_sidebar_v130", false);
-        prefs.edit().putBoolean("developer_sidebar_v130", next).apply();
-        toast(next ? "已開啟右側快捷工具" : "已關閉右側快捷工具");
-    }
     String startUrl() {return prefs.getString("start_url_v130","");}
     private static final String HISTORY = "browser_history_v120";
     private static final String STYLE = "browser_theme_v120";
@@ -146,38 +139,6 @@ public final class BrowserExtras {
         String url=prefs.getString("last_closed_url_v120","");
         if (url.isEmpty()) { toast("沒有最近關閉的分頁"); return; }
         web.loadUrl(url);
-    }
-    void searchInPage() {
-        EditText input = new EditText(activity);
-        input.setSingleLine(true);
-        input.setHint("輸入網頁搜尋文字");
-        LinearLayout row=new LinearLayout(activity);
-        row.setOrientation(LinearLayout.VERTICAL);
-        row.setPadding(dp(20),dp(8),dp(20),0);
-        row.addView(input);
-        TextView count=new TextView(activity);
-        count.setPadding(0,dp(12),0,dp(10));
-        count.setText("輸入關鍵字搜尋");
-        row.addView(count);
-        web.setFindListener((active,total,done)->activity.runOnUiThread(()->
-          count.setText(total==0?"找不到符合項目":"第 "+(active+1)+" 個，共 "+total+" 個")));
-        input.addTextChangedListener(new android.text.TextWatcher() {
-            public void beforeTextChanged(CharSequence s,int st,int c,int a){}
-            public void onTextChanged(CharSequence s,int st,int before,int count) {
-                if (s.length()==0) { web.clearMatches(); return; }
-                web.findAllAsync(s.toString());
-            }
-            public void afterTextChanged(android.text.Editable e){}
-        });
-        AlertDialog dialog=new AlertDialog.Builder(activity).setTitle("在網頁中搜尋").setView(row)
-          .setPositiveButton("下一個",null).setNeutralButton("上一個",null)
-          .setNegativeButton("完成",(d,w)->web.clearMatches()).create();
-        dialog.setOnShowListener(d->{
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->web.findNext(true));
-            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(v->web.findNext(false));
-        });
-        dialog.setOnCancelListener(d->web.clearMatches());
-        dialog.show();
     }
     void zoom(boolean increase) {
         int value=prefs.getInt("zoom_v120",100);
@@ -455,7 +416,6 @@ public final class BrowserExtras {
         cfg.put("browser", browser);
         JSONObject developer = new JSONObject();
         developer.put("autoScriptsEnabled", prefs.getBoolean("autoScriptsEnabled_v120",true));
-        developer.put("sidebarEnabled", prefs.getBoolean("developer_sidebar_v130",false));
         if (scripts != null) developer.put("scripts", scripts.exportScripts());
         cfg.put("developer", developer);
         return cfg;
@@ -507,8 +467,6 @@ public final class BrowserExtras {
         Boolean developerMode = cfg.has("developerMode") ? cfg.getBoolean("developerMode") : null;
         Boolean enabled = developer != null && developer.has("autoScriptsEnabled")
             ? developer.getBoolean("autoScriptsEnabled") : null;
-        Boolean sidebar = developer != null && developer.has("sidebarEnabled")
-            ? developer.getBoolean("sidebarEnabled") : null;
         Boolean desktop = browser != null && browser.has("desktopMode")
             ? browser.getBoolean("desktopMode") : null;
         Integer zoom = browser != null && browser.has("defaultZoom")
@@ -517,7 +475,6 @@ public final class BrowserExtras {
         SharedPreferences.Editor editor = prefs.edit().putString(STYLE, next.toString());
         if (developerMode != null) editor.putBoolean("developer_mode_v120",developerMode);
         if (enabled != null) editor.putBoolean("autoScriptsEnabled_v120",enabled);
-        if (sidebar != null) editor.putBoolean("developer_sidebar_v130",sidebar);
         if (desktop != null) editor.putBoolean("desktop_v120",desktop);
         if (zoom != null) editor.putInt("zoom_v120",zoom);
         if (target != null) editor.putString("start_url_v130",target);
